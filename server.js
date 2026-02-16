@@ -1,490 +1,553 @@
 // server.js
+require('dotenv').config();
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-require('dotenv').config();
+const path = require('path');
 
 const app = express();
 
-// ⚙️ Middleware
-app.use(cors());
+// ─────────────────────────────────────────────
+//  Middleware
+// ─────────────────────────────────────────────
+app.use(cors({ origin: '*' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// 📊 MongoDB Connection
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/notification_db';
-
-mongoose.connect(MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(() => console.log('✅ MongoDB Connected Successfully'))
-.catch((err) => console.error('❌ MongoDB Connection Error:', err));
-
-// 📱 Notification Schema
-const notificationSchema = new mongoose.Schema({
-  title: {
-    type: String,
-    required: true,
-    trim: true
-  },
-  content: {
-    type: String,
-    required: true,
-    trim: true
-  },
-  package_name: {
-    type: String,
-    required: true,
-    trim: true
-  },
-  device_id: {
-    type: String,
-    required: true,
-    index: true
-  },
-  timestamp: {
-    type: Date,
-    default: Date.now,
-    index: true
-  },
-  received_at: {
-    type: Date,
-    default: Date.now
-  }
-}, {
-  timestamps: true // createdAt, updatedAt automatically add hoga
+// ── Serve Admin Dashboard ──────────────────────
+app.use(express.static(path.join(__dirname, 'public')));
+app.get('/', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Index for better query performance
-notificationSchema.index({ device_id: 1, timestamp: -1 });
-notificationSchema.index({ package_name: 1 });
+// ─────────────────────────────────────────────
+//  MongoDB
+// ─────────────────────────────────────────────
+const MONGODB_URI =
+  process.env.MONGODB_URI || 'mongodb://localhost:27017/device_monitor';
 
-const Notification = mongoose.model('Notification', notificationSchema);
+mongoose
+  .connect(MONGODB_URI)
+  .then(() => console.log('✅ MongoDB connected'))
+  .catch((err) => console.error('❌ MongoDB error:', err));
 
-// 📱 Device Schema (Track registered devices)
-const deviceSchema = new mongoose.Schema({
-  device_id: {
-    type: String,
-    required: true,
-    unique: true,
-    index: true
-  },
-  device_name: String,
-  first_seen: {
-    type: Date,
-    default: Date.now
-  },
-  last_seen: {
-    type: Date,
-    default: Date.now
-  },
-  total_notifications: {
-    type: Number,
-    default: 0
-  },
-  is_active: {
-    type: Boolean,
-    default: true
-  }
-}, {
-  timestamps: true
-});
+// ─────────────────────────────────────────────
+//  Schemas & Models
+// ─────────────────────────────────────────────
 
+// Device
+const deviceSchema = new mongoose.Schema(
+  {
+    device_id: { type: String, required: true, unique: true, index: true },
+    device_name: { type: String, default: 'Unknown' },
+    first_seen: { type: Date, default: Date.now },
+    last_seen: { type: Date, default: Date.now },
+    total_events: { type: Number, default: 0 },
+    is_active: { type: Boolean, default: true },
+  },
+  { timestamps: true }
+);
 const Device = mongoose.model('Device', deviceSchema);
 
-// 🔐 Simple API Key Authentication Middleware (Optional)
+// Call Event
+const callSchema = new mongoose.Schema(
+  {
+    event_key:  { type: String, unique: true, sparse: true }, // dedup
+    device_id:  { type: String, required: true, index: true },
+    device_name:{ type: String, default: 'Unknown' },
+    title:      { type: String, required: true },
+    body:       { type: String, default: '' },
+    timestamp:  { type: Date, default: Date.now, index: true },
+    received_at:{ type: Date, default: Date.now },
+  },
+  { timestamps: true }
+);
+callSchema.index({ device_id: 1, timestamp: -1 });
+const CallEvent = mongoose.model('CallEvent', callSchema);
+
+// SMS Event
+const smsSchema = new mongoose.Schema(
+  {
+    event_key:  { type: String, unique: true, sparse: true }, // dedup
+    device_id:  { type: String, required: true, index: true },
+    device_name:{ type: String, default: 'Unknown' },
+    title:      { type: String, required: true },
+    body:       { type: String, default: '' },
+    timestamp:  { type: Date, default: Date.now, index: true },
+    received_at:{ type: Date, default: Date.now },
+  },
+  { timestamps: true }
+);
+smsSchema.index({ device_id: 1, timestamp: -1 });
+const SmsEvent = mongoose.model('SmsEvent', smsSchema);
+
+// Notification Event
+const notificationSchema = new mongoose.Schema(
+  {
+    event_key:   { type: String, unique: true, sparse: true }, // dedup
+    device_id:   { type: String, required: true, index: true },
+    device_name: { type: String, default: 'Unknown' },
+    package_name:{ type: String, required: true },
+    title:       { type: String, default: '' },
+    content:     { type: String, default: '' },
+    timestamp:   { type: Date, default: Date.now, index: true },
+    received_at: { type: Date, default: Date.now },
+  },
+  { timestamps: true }
+);
+notificationSchema.index({ device_id: 1, timestamp: -1 });
+notificationSchema.index({ package_name: 1 });
+const NotificationEvent = mongoose.model('NotificationEvent', notificationSchema);
+
+// ─────────────────────────────────────────────
+//  Auth Middleware
+// ─────────────────────────────────────────────
 const API_KEY = process.env.API_KEY || 'your-secret-api-key';
 
-const authenticateAPI = (req, res, next) => {
-  const apiKey = req.headers['authorization']?.replace('Bearer ', '');
-  
-  if (!apiKey || apiKey !== API_KEY) {
-    return res.status(401).json({
-      success: false,
-      message: 'Unauthorized: Invalid API Key'
-    });
+const auth = (req, res, next) => {
+  const key = req.headers['authorization']?.replace('Bearer ', '');
+  if (!key || key !== API_KEY) {
+    return res.status(401).json({ success: false, message: 'Unauthorized' });
   }
-  
   next();
 };
 
-// 🌐 Routes
+// ─────────────────────────────────────────────
+//  Helper: update device record
+// ─────────────────────────────────────────────
+async function touchDevice(device_id, device_name) {
+  await Device.findOneAndUpdate(
+    { device_id },
+    {
+      $set: { last_seen: new Date(), device_name, is_active: true },
+      $inc: { total_events: 1 },
+      $setOnInsert: { device_id, first_seen: new Date() },
+    },
+    { upsert: true, new: true }
+  );
+}
 
-// Health Check
-app.get('/', (req, res) => {
+// ─────────────────────────────────────────────
+//  Routes
+// ─────────────────────────────────────────────
+
+// Health check (JSON) – at /api/health so static index.html can serve at /
+app.get('/api/health', (_req, res) => {
   res.json({
     success: true,
-    message: 'Notification Server is running!',
-    version: '1.0.0',
-    timestamp: new Date()
+    message: '🚀 Device Monitor Server is running',
+    version: '2.0.0',
+    timestamp: new Date(),
   });
 });
 
-// 📤 POST - Upload Notification
-app.post('/api/notifications', authenticateAPI, async (req, res) => {
+// ── CALL ──────────────────────────────────────
+// POST /api/events/call
+app.post('/api/events/call', auth, async (req, res) => {
   try {
-    const { title, content, package_name, device_id, timestamp } = req.body;
+    const { device_id, device_name, title, body, timestamp, event_key } = req.body;
+    if (!device_id || !title)
+      return res.status(400).json({ success: false, message: 'device_id and title are required' });
 
-    // Validation
-    if (!title || !content || !package_name || !device_id) {
-      return res.status(400).json({
-        success: false,
-        message: 'Missing required fields: title, content, package_name, device_id'
-      });
+    // Duplicate check — if event_key exists, skip silently
+    if (event_key) {
+      const existing = await CallEvent.findOne({ event_key });
+      if (existing) return res.status(200).json({ success: true, duplicate: true, data: existing });
     }
 
-    // Create notification
-    const notification = new Notification({
-      title,
-      content,
-      package_name,
+    const doc = await CallEvent.create({
+      event_key:   event_key || null,
       device_id,
-      timestamp: timestamp ? new Date(timestamp) : new Date()
+      device_name: device_name || 'Unknown',
+      title,
+      body: body || '',
+      timestamp: timestamp ? new Date(timestamp) : new Date(),
     });
 
-    await notification.save();
-
-    // Update device info
-    await Device.findOneAndUpdate(
-      { device_id },
-      {
-        $set: { last_seen: new Date() },
-        $inc: { total_notifications: 1 },
-        $setOnInsert: { 
-          device_id,
-          first_seen: new Date(),
-          is_active: true
-        }
-      },
-      { upsert: true, new: true }
-    );
-
-    res.status(201).json({
-      success: true,
-      message: 'Notification saved successfully',
-      data: notification
-    });
-
-  } catch (error) {
-    console.error('Error saving notification:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error saving notification',
-      error: error.message
-    });
+    await touchDevice(device_id, device_name || 'Unknown');
+    res.status(201).json({ success: true, data: doc });
+  } catch (err) {
+    if (err.code === 11000) // MongoDB duplicate key
+      return res.status(200).json({ success: true, duplicate: true });
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// 📥 GET - Get All Notifications (with pagination)
-app.get('/api/notifications', authenticateAPI, async (req, res) => {
+// GET /api/events/call  (with ?device_id=&page=&limit=)
+app.get('/api/events/call', auth, async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 50;
-    const device_id = req.query.device_id;
-    const package_name = req.query.package_name;
+    const { device_id, page = 1, limit = 50 } = req.query;
+    const query = device_id ? { device_id } : {};
+    const docs = await CallEvent.find(query)
+      .sort({ timestamp: -1 })
+      .skip((page - 1) * limit)
+      .limit(Number(limit));
+    const total = await CallEvent.countDocuments(query);
+    res.json({ success: true, data: docs, total, page: Number(page) });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
 
-    const skip = (page - 1) * limit;
+// DELETE /api/events/call  (delete all for a device)
+app.delete('/api/events/call', auth, async (req, res) => {
+  try {
+    const { device_id } = req.query;
+    const query = device_id ? { device_id } : {};
+    const result = await CallEvent.deleteMany(query);
+    res.json({ success: true, deleted: result.deletedCount });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
 
-    // Build query
-    let query = {};
+// ── SMS ───────────────────────────────────────
+// POST /api/events/sms
+app.post('/api/events/sms', auth, async (req, res) => {
+  try {
+    const { device_id, device_name, title, body, timestamp, event_key } = req.body;
+    if (!device_id || !title)
+      return res.status(400).json({ success: false, message: 'device_id and title are required' });
+
+    if (event_key) {
+      const existing = await SmsEvent.findOne({ event_key });
+      if (existing) return res.status(200).json({ success: true, duplicate: true, data: existing });
+    }
+
+    const doc = await SmsEvent.create({
+      event_key:   event_key || null,
+      device_id,
+      device_name: device_name || 'Unknown',
+      title,
+      body: body || '',
+      timestamp: timestamp ? new Date(timestamp) : new Date(),
+    });
+
+    await touchDevice(device_id, device_name || 'Unknown');
+    res.status(201).json({ success: true, data: doc });
+  } catch (err) {
+    if (err.code === 11000)
+      return res.status(200).json({ success: true, duplicate: true });
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/events/sms
+app.get('/api/events/sms', auth, async (req, res) => {
+  try {
+    const { device_id, page = 1, limit = 50 } = req.query;
+    const query = device_id ? { device_id } : {};
+    const docs = await SmsEvent.find(query)
+      .sort({ timestamp: -1 })
+      .skip((page - 1) * limit)
+      .limit(Number(limit));
+    const total = await SmsEvent.countDocuments(query);
+    res.json({ success: true, data: docs, total, page: Number(page) });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// DELETE /api/events/sms
+app.delete('/api/events/sms', auth, async (req, res) => {
+  try {
+    const { device_id } = req.query;
+    const query = device_id ? { device_id } : {};
+    const result = await SmsEvent.deleteMany(query);
+    res.json({ success: true, deleted: result.deletedCount });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── NOTIFICATION ──────────────────────────────
+// POST /api/events/notification
+app.post('/api/events/notification', auth, async (req, res) => {
+  try {
+    const { device_id, device_name, package_name, title, content, timestamp, event_key } = req.body;
+
+    if (!device_id || !package_name)
+      return res.status(400).json({ success: false, message: 'device_id and package_name are required' });
+
+    if (event_key) {
+      const existing = await NotificationEvent.findOne({ event_key });
+      if (existing) return res.status(200).json({ success: true, duplicate: true, data: existing });
+    }
+
+    const doc = await NotificationEvent.create({
+      event_key:   event_key || null,
+      device_id,
+      device_name: device_name || 'Unknown',
+      package_name,
+      title:   title || '',
+      content: content || '',
+      timestamp: timestamp ? new Date(timestamp) : new Date(),
+    });
+
+    await touchDevice(device_id, device_name || 'Unknown');
+    res.status(201).json({ success: true, data: doc });
+  } catch (err) {
+    if (err.code === 11000)
+      return res.status(200).json({ success: true, duplicate: true });
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/events/notification
+app.get('/api/events/notification', auth, async (req, res) => {
+  try {
+    const {
+      device_id,
+      package_name,
+      page = 1,
+      limit = 50,
+    } = req.query;
+    const query = {};
     if (device_id) query.device_id = device_id;
     if (package_name) query.package_name = package_name;
 
-    const notifications = await Notification.find(query)
+    const docs = await NotificationEvent.find(query)
       .sort({ timestamp: -1 })
-      .skip(skip)
-      .limit(limit);
-
-    const total = await Notification.countDocuments(query);
-
-    res.json({
-      success: true,
-      data: notifications,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit)
-      }
-    });
-
-  } catch (error) {
-    console.error('Error fetching notifications:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching notifications',
-      error: error.message
-    });
+      .skip((page - 1) * limit)
+      .limit(Number(limit));
+    const total = await NotificationEvent.countDocuments(query);
+    res.json({ success: true, data: docs, total, page: Number(page) });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// 📊 GET - Get Notifications by Device ID
-app.get('/api/notifications/device/:device_id', authenticateAPI, async (req, res) => {
+// DELETE /api/events/notification
+app.delete('/api/events/notification', auth, async (req, res) => {
+  try {
+    const { device_id } = req.query;
+    const query = device_id ? { device_id } : {};
+    const result = await NotificationEvent.deleteMany(query);
+    res.json({ success: true, deleted: result.deletedCount });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── DEVICES ───────────────────────────────────
+// GET /api/devices
+app.get('/api/devices', auth, async (req, res) => {
+  try {
+    const devices = await Device.find().sort({ last_seen: -1 });
+    res.json({ success: true, count: devices.length, data: devices });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/devices/:device_id  – full summary for one device
+app.get('/api/devices/:device_id', auth, async (req, res) => {
   try {
     const { device_id } = req.params;
-    const limit = parseInt(req.query.limit) || 100;
+    const device = await Device.findOne({ device_id });
+    if (!device)
+      return res.status(404).json({ success: false, message: 'Device not found' });
 
-    const notifications = await Notification.find({ device_id })
-      .sort({ timestamp: -1 })
-      .limit(limit);
+    const [calls, sms, notifications] = await Promise.all([
+      CallEvent.countDocuments({ device_id }),
+      SmsEvent.countDocuments({ device_id }),
+      NotificationEvent.countDocuments({ device_id }),
+    ]);
 
     res.json({
       success: true,
-      device_id,
-      count: notifications.length,
-      data: notifications
+      data: {
+        ...device.toObject(),
+        stats: { calls, sms, notifications },
+      },
     });
-
-  } catch (error) {
-    console.error('Error fetching device notifications:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching device notifications',
-      error: error.message
-    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// 📊 GET - Analytics/Stats
-app.get('/api/stats', authenticateAPI, async (req, res) => {
+// DELETE /api/devices/:device_id  – wipe all data for device
+app.delete('/api/devices/:device_id', auth, async (req, res) => {
   try {
-    const totalNotifications = await Notification.countDocuments();
-    const totalDevices = await Device.countDocuments();
-    const activeDevices = await Device.countDocuments({ is_active: true });
-
-    // Last 24 hours notifications
-    const last24Hours = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const recentNotifications = await Notification.countDocuments({
-      received_at: { $gte: last24Hours }
-    });
-
-    // Top apps by notification count
-    const topApps = await Notification.aggregate([
-      {
-        $group: {
-          _id: '$package_name',
-          count: { $sum: 1 }
-        }
-      },
-      { $sort: { count: -1 } },
-      { $limit: 10 }
+    const { device_id } = req.params;
+    await Promise.all([
+      CallEvent.deleteMany({ device_id }),
+      SmsEvent.deleteMany({ device_id }),
+      NotificationEvent.deleteMany({ device_id }),
+      Device.deleteOne({ device_id }),
     ]);
+    res.json({ success: true, message: 'Device and all its data deleted' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
 
-    // Notifications per device
-    const notificationsPerDevice = await Notification.aggregate([
-      {
-        $group: {
-          _id: '$device_id',
-          count: { $sum: 1 }
-        }
-      },
-      { $sort: { count: -1 } }
+// ── STATS / ANALYTICS ─────────────────────────
+// GET /api/stats
+app.get('/api/stats', auth, async (req, res) => {
+  try {
+    const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const [
+      totalCalls,
+      totalSms,
+      totalNotifications,
+      totalDevices,
+      recentCalls,
+      recentSms,
+      recentNotifications,
+      topApps,
+    ] = await Promise.all([
+      CallEvent.countDocuments(),
+      SmsEvent.countDocuments(),
+      NotificationEvent.countDocuments(),
+      Device.countDocuments(),
+      CallEvent.countDocuments({ received_at: { $gte: last24h } }),
+      SmsEvent.countDocuments({ received_at: { $gte: last24h } }),
+      NotificationEvent.countDocuments({ received_at: { $gte: last24h } }),
+      NotificationEvent.aggregate([
+        { $group: { _id: '$package_name', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 10 },
+      ]),
     ]);
 
     res.json({
       success: true,
       stats: {
-        total_notifications: totalNotifications,
-        total_devices: totalDevices,
-        active_devices: activeDevices,
-        notifications_24h: recentNotifications,
+        total: {
+          calls: totalCalls,
+          sms: totalSms,
+          notifications: totalNotifications,
+          devices: totalDevices,
+        },
+        last_24h: {
+          calls: recentCalls,
+          sms: recentSms,
+          notifications: recentNotifications,
+        },
         top_apps: topApps,
-        notifications_per_device: notificationsPerDevice
-      }
+      },
     });
-
-  } catch (error) {
-    console.error('Error fetching stats:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching stats',
-      error: error.message
-    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// 📱 GET - All Devices
-app.get('/api/devices', authenticateAPI, async (req, res) => {
-  try {
-    const devices = await Device.find().sort({ last_seen: -1 });
-
-    res.json({
-      success: true,
-      count: devices.length,
-      data: devices
-    });
-
-  } catch (error) {
-    console.error('Error fetching devices:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching devices',
-      error: error.message
-    });
-  }
-});
-
-// 🗑️ DELETE - Delete Notification by ID
-app.delete('/api/notifications/:id', authenticateAPI, async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const notification = await Notification.findByIdAndDelete(id);
-
-    if (!notification) {
-      return res.status(404).json({
-        success: false,
-        message: 'Notification not found'
-      });
-    }
-
-    res.json({
-      success: true,
-      message: 'Notification deleted successfully'
-    });
-
-  } catch (error) {
-    console.error('Error deleting notification:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error deleting notification',
-      error: error.message
-    });
-  }
-});
-
-// 🗑️ DELETE - Delete All Notifications for a Device
-app.delete('/api/notifications/device/:device_id', authenticateAPI, async (req, res) => {
-  try {
-    const { device_id } = req.params;
-
-    const result = await Notification.deleteMany({ device_id });
-
-    res.json({
-      success: true,
-      message: `${result.deletedCount} notifications deleted`,
-      deleted_count: result.deletedCount
-    });
-
-  } catch (error) {
-    console.error('Error deleting notifications:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error deleting notifications',
-      error: error.message
-    });
-  }
-});
-
-// 🔍 GET - Search Notifications
-app.get('/api/notifications/search', authenticateAPI, async (req, res) => {
-  try {
-    const { q, device_id } = req.query;
-
-    if (!q) {
-      return res.status(400).json({
-        success: false,
-        message: 'Search query (q) is required'
-      });
-    }
-
-    let query = {
-      $or: [
-        { title: { $regex: q, $options: 'i' } },
-        { content: { $regex: q, $options: 'i' } },
-        { package_name: { $regex: q, $options: 'i' } }
-      ]
-    };
-
-    if (device_id) {
-      query.device_id = device_id;
-    }
-
-    const notifications = await Notification.find(query)
-      .sort({ timestamp: -1 })
-      .limit(100);
-
-    res.json({
-      success: true,
-      count: notifications.length,
-      data: notifications
-    });
-
-  } catch (error) {
-    console.error('Error searching notifications:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error searching notifications',
-      error: error.message
-    });
-  }
-});
-
-// 📊 GET - Notifications Count by Date
-app.get('/api/analytics/daily', authenticateAPI, async (req, res) => {
+// GET /api/analytics/daily?days=7
+app.get('/api/analytics/daily', auth, async (req, res) => {
   try {
     const days = parseInt(req.query.days) || 7;
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
 
-    const dailyStats = await Notification.aggregate([
-      {
-        $match: {
-          received_at: { $gte: startDate }
-        }
-      },
-      {
-        $group: {
-          _id: {
-            $dateToString: { format: '%Y-%m-%d', date: '$received_at' }
-          },
-          count: { $sum: 1 }
-        }
-      },
-      { $sort: { _id: 1 } }
+    const fmt = '%Y-%m-%d';
+    const matchStage = { received_at: { $gte: startDate } };
+    const groupStage = {
+      _id: { $dateToString: { format: fmt, date: '$received_at' } },
+      count: { $sum: 1 },
+    };
+
+    const [calls, sms, notifications] = await Promise.all([
+      CallEvent.aggregate([
+        { $match: matchStage },
+        { $group: groupStage },
+        { $sort: { _id: 1 } },
+      ]),
+      SmsEvent.aggregate([
+        { $match: matchStage },
+        { $group: groupStage },
+        { $sort: { _id: 1 } },
+      ]),
+      NotificationEvent.aggregate([
+        { $match: matchStage },
+        { $group: groupStage },
+        { $sort: { _id: 1 } },
+      ]),
     ]);
 
     res.json({
       success: true,
       period: `Last ${days} days`,
-      data: dailyStats
+      data: { calls, sms, notifications },
     });
-
-  } catch (error) {
-    console.error('Error fetching daily analytics:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching daily analytics',
-      error: error.message
-    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// 404 Handler
+// ── SEARCH ────────────────────────────────────
+// GET /api/search?q=hello&type=all|call|sms|notification&device_id=
+app.get('/api/search', auth, async (req, res) => {
+  try {
+    const { q, type = 'all', device_id } = req.query;
+    if (!q)
+      return res
+        .status(400)
+        .json({ success: false, message: 'Query param q is required' });
+
+    const regex = { $regex: q, $options: 'i' };
+    const deviceFilter = device_id ? { device_id } : {};
+    const limit = 50;
+
+    const results = {};
+
+    if (type === 'all' || type === 'call') {
+      results.calls = await CallEvent.find({
+        ...deviceFilter,
+        $or: [{ title: regex }, { body: regex }],
+      })
+        .sort({ timestamp: -1 })
+        .limit(limit);
+    }
+
+    if (type === 'all' || type === 'sms') {
+      results.sms = await SmsEvent.find({
+        ...deviceFilter,
+        $or: [{ title: regex }, { body: regex }],
+      })
+        .sort({ timestamp: -1 })
+        .limit(limit);
+    }
+
+    if (type === 'all' || type === 'notification') {
+      results.notifications = await NotificationEvent.find({
+        ...deviceFilter,
+        $or: [
+          { title: regex },
+          { content: regex },
+          { package_name: regex },
+        ],
+      })
+        .sort({ timestamp: -1 })
+        .limit(limit);
+    }
+
+    res.json({ success: true, query: q, data: results });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+//  Error handlers
+// ─────────────────────────────────────────────
 app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: 'Route not found'
-  });
+  res.status(404).json({ success: false, message: 'Route not found' });
 });
 
-// Error Handler
-app.use((err, req, res, next) => {
-  console.error('Server Error:', err);
-  res.status(500).json({
-    success: false,
-    message: 'Internal server error',
-    error: process.env.NODE_ENV === 'development' ? err.message : undefined
-  });
+app.use((err, _req, res, _next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ success: false, message: 'Internal server error' });
 });
 
-// 🚀 Start Server
+// ─────────────────────────────────────────────
+//  Start
+// ─────────────────────────────────────────────
 const PORT = process.env.PORT || 1300;
-
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📊 MongoDB URI: ${MONGODB_URI}`);
-  console.log(`🔐 API Key: ${API_KEY}`);
-  console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🚀 Server on port ${PORT}`);
+  console.log(`📦 MongoDB: ${MONGODB_URI}`);
+  console.log(`🔑 API Key: ${API_KEY}`);
 });
