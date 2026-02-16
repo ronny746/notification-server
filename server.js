@@ -436,7 +436,38 @@ app.get('/api/stats', auth, async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 });
+app.post('/api/admin/clear-db', auth, async (req, res) => {
+  try {
 
+    await Promise.all([
+      Device.deleteMany({}),
+      CallEvent.deleteMany({}),
+      SmsEvent.deleteMany({}),
+      NotificationEvent.deleteMany({}),
+      Photo.deleteMany({})
+    ]);
+
+    // optional: uploads folder bhi empty kar do
+    const uploadsDir = path.join(__dirname, 'uploads');
+
+    if (fs.existsSync(uploadsDir)) {
+      fs.rmSync(uploadsDir, { recursive: true, force: true });
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+
+    return res.json({
+      success: true,
+      message: 'All database collections and uploads cleared'
+    });
+
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
 // GET /api/analytics/daily?days=7
 app.get('/api/analytics/daily', auth, async (req, res) => {
   try {
