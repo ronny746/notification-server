@@ -5,6 +5,8 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const path = require('path');
+const multer = require('multer');
+const fs = require('fs');
 
 const app = express();
 
@@ -525,6 +527,133 @@ app.get('/api/search', auth, async (req, res) => {
     }
 
     res.json({ success: true, query: q, data: results });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+//  GALLERY
+// ─────────────────────────────────────────────
+
+// Multer — save photos to uploads/<device_id>/
+const _storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(__dirname, 'uploads', req.body.device_id || 'unknown');
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (_req, file, cb) => {
+    cb(null, `${Date.now()}_${file.originalname}`);
+  },
+});
+const upload = multer({
+  storage: _storage,
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    cb(null, /jpeg|jpg|png|gif|webp|mp4|mov/.test(file.mimetype));
+  },
+});
+
+// Serve uploaded files publicly
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Photo Schema
+const photoSchema = new mongoose.Schema(
+  {
+    event_key:   { type: String, unique: true, sparse: true },
+    device_id:   { type: String, required: true, index: true },
+    device_name: { type: String, default: 'Unknown' },
+    file_name:   { type: String, required: true },
+    file_path:   { type: String, required: true },
+    file_url:    { type: String, required: true },
+    file_size:   { type: Number, default: 0 },
+    width:       { type: Number, default: 0 },
+    height:      { type: Number, default: 0 },
+    duration:    { type: Number, default: 0 },
+    timestamp:   { type: Date, default: Date.now, index: true },
+    received_at: { type: Date, default: Date.now },
+  },
+  { timestamps: true }
+);
+photoSchema.index({ device_id: 1, timestamp: -1 });
+const Photo = mongoose.model('Photo', photoSchema);
+
+// POST /api/gallery/upload
+app.post('/api/gallery/upload', auth, upload.single('photo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
+
+    const { device_id, device_name, file_name, timestamp, width, height, duration } = req.body;
+    if (!device_id) return res.status(400).json({ success: false, message: 'device_id required' });
+
+    const eventKey = `photo_${device_id}_${file_name}_${timestamp}`;
+    const existing = await Photo.findOne({ event_key: eventKey });
+    if (existing) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(200).json({ success: true, duplicate: true });
+    }
+
+    const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${device_id}/${req.file.filename}`;
+    const doc = await Photo.create({
+      event_key:   eventKey,
+      device_id,
+      device_name: device_name || 'Unknown',
+      file_name:   file_name || req.file.originalname,
+      file_path:   req.file.path,
+      file_url:    fileUrl,
+      file_size:   req.file.size,
+      width:       parseInt(width) || 0,
+      height:      parseInt(height) || 0,
+      duration:    parseInt(duration) || 0,
+      timestamp:   timestamp ? new Date(timestamp) : new Date(),
+    });
+
+    await touchDevice(device_id, device_name || 'Unknown');
+    res.status(201).json({ success: true, data: doc });
+  } catch (err) {
+    if (err.code === 11000) return res.status(200).json({ success: true, duplicate: true });
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/gallery
+app.get('/api/gallery', auth, async (req, res) => {
+  try {
+    const { device_id, page = 1, limit = 50 } = req.query;
+    const query = device_id ? { device_id } : {};
+    const photos = await Photo.find(query)
+      .sort({ timestamp: -1 })
+      .skip((page - 1) * limit)
+      .limit(Number(limit))
+      .select('-file_path');
+    const total = await Photo.countDocuments(query);
+    res.json({ success: true, data: photos, total, page: Number(page) });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// DELETE /api/gallery/:id
+app.delete('/api/gallery/:id', auth, async (req, res) => {
+  try {
+    const photo = await Photo.findByIdAndDelete(req.params.id);
+    if (!photo) return res.status(404).json({ success: false, message: 'Not found' });
+    fs.unlink(photo.file_path, () => {});
+    res.json({ success: true, message: 'Deleted' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// DELETE /api/gallery/device/:device_id
+app.delete('/api/gallery/device/:device_id', auth, async (req, res) => {
+  try {
+    const { device_id } = req.params;
+    const photos = await Photo.find({ device_id });
+    for (const p of photos) fs.unlink(p.file_path, () => {});
+    const result = await Photo.deleteMany({ device_id });
+    res.json({ success: true, deleted: result.deletedCount });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
