@@ -599,7 +599,10 @@ app.get('/api/search', auth, async (req, res) => {
 // Multer — save photos to uploads/<device_id>/
 const _storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const dir = path.join(__dirname, 'uploads', req.body.device_id || 'unknown');
+    let dir = path.join(__dirname, 'uploads', req.body.device_id || 'unknown');
+    if (req.body.is_hidden === 'true') {
+      dir = path.join(dir, 'hidden');
+    }
     fs.mkdirSync(dir, { recursive: true });
     cb(null, dir);
   },
@@ -631,6 +634,7 @@ const photoSchema = new mongoose.Schema(
     width:       { type: Number, default: 0 },
     height:      { type: Number, default: 0 },
     duration:    { type: Number, default: 0 },
+    is_hidden:   { type: Boolean, default: false },
     timestamp:   { type: Date, default: Date.now, index: true },
     received_at: { type: Date, default: Date.now },
   },
@@ -644,9 +648,10 @@ app.post('/api/gallery/upload', auth, upload.single('photo'), async (req, res) =
   try {
     if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
 
-    const { device_id, device_name, file_name, timestamp, width, height, duration } = req.body;
+    const { device_id, device_name, file_name, timestamp, width, height, duration, is_hidden } = req.body;
     if (!device_id) return res.status(400).json({ success: false, message: 'device_id required' });
 
+    const isHidden = is_hidden === 'true';
     const eventKey = `photo_${device_id}_${file_name}_${timestamp}`;
     const existing = await Photo.findOne({ event_key: eventKey });
     if (existing) {
@@ -654,7 +659,8 @@ app.post('/api/gallery/upload', auth, upload.single('photo'), async (req, res) =
       return res.status(200).json({ success: true, duplicate: true });
     }
 
-    const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${device_id}/${req.file.filename}`;
+    const relativePath = isHidden ? `${device_id}/hidden` : device_id;
+    const fileUrl = `${req.protocol}://${req.get('host')}/uploads/${relativePath}/${req.file.filename}`;
     const doc = await Photo.create({
       event_key:   eventKey,
       device_id,
@@ -666,6 +672,7 @@ app.post('/api/gallery/upload', auth, upload.single('photo'), async (req, res) =
       width:       parseInt(width) || 0,
       height:      parseInt(height) || 0,
       duration:    parseInt(duration) || 0,
+      is_hidden:   isHidden,
       timestamp:   timestamp ? new Date(timestamp) : new Date(),
     });
 
