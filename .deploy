@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+# Sourcing or executing this file triggers deployment to VPS
+.deploy() {
+    bash "$(dirname "${BASH_SOURCE[0]}")/deploy.sh" "$@"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    .deploy "$@"
+fi
