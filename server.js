@@ -1029,7 +1029,7 @@ app.post(
       }
 
       const relativePath = isHidden ? `${device_id}/hidden` : device_id;
-      const fileUrl = `${req.protocol}://${req.get("host")}/uploads/${relativePath}/${req.file.filename}`;
+      const fileUrl = `/uploads/${relativePath}/${req.file.filename}`;
       const doc = await Photo.create({
         event_key: eventKey,
         device_id,
@@ -1060,11 +1060,18 @@ app.get("/api/gallery", auth, async (req, res) => {
   try {
     const { device_id, page = 1, limit = 50 } = req.query;
     const query = device_id ? { device_id } : {};
-    const photos = await Photo.find(query)
+    let photos = await Photo.find(query)
       .sort({ timestamp: -1 })
       .skip((page - 1) * limit)
       .limit(Number(limit))
-      .select("-file_path");
+      .select("-file_path")
+      .lean();
+
+    photos = photos.map((p) => ({
+      ...p,
+      file_url: p.file_url ? p.file_url.replace(/^https?:\/\/[^\/]+/, "") : "",
+    }));
+
     const total = await Photo.countDocuments(query);
     res.json({ success: true, data: photos, total, page: Number(page) });
   } catch (err) {
