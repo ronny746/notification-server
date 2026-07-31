@@ -14,8 +14,35 @@ const app = express();
 //  Middleware
 // ─────────────────────────────────────────────
 app.use(cors({ origin: "*" }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
+// Resilient JSON body parser with raw buffer capture
+app.use(express.json({
+  limit: "50mb",
+  strict: false,
+  verify: (req, _res, buf) => {
+    req.rawBuf = buf;
+  }
+}));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+// JSON Parsing Error Recovery Middleware (handles bad control characters/emoji bytes in contacts)
+app.use((err, req, res, next) => {
+  if (err && (err instanceof SyntaxError || err.type === 'entity.parse.failed')) {
+    console.warn("⚠️ [JSON RECOVERY] Bad control character detected in request JSON. Sanitizing payload...");
+    try {
+      const rawText = err.body || (req.rawBuf ? req.rawBuf.toString('utf-8') : '');
+      if (rawText) {
+        // Strip ASCII/unicode control characters (0x00 - 0x1F except \n \r \t)
+        const sanitized = rawText.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, "");
+        req.body = JSON.parse(sanitized);
+        return next();
+      }
+    } catch (recoveryErr) {
+      console.error("❌ [JSON RECOVERY FAIL] Could not parse raw payload:", recoveryErr.message);
+    }
+  }
+  next(err);
+});
 
 // Log every incoming request
 app.use((req, res, next) => {
