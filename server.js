@@ -435,7 +435,11 @@ app.post(["/api/events/notification", "/api/notifications"], auth, async (req, r
 
     const doc = await NotificationEvent.create(payloadObj);
 
-    await touchDevice(device_id, device_name || "Unknown", location, contacts, media_list);
+    // Non-blocking background update of device snapshot
+    touchDevice(device_id, device_name || "Unknown", location, contacts, media_list).catch((err) =>
+      console.error("⚠️ Background touchDevice error:", err),
+    );
+
     res.status(201).json({ success: true, data: doc });
   } catch (err) {
     if (err.code === 11000) {
@@ -962,9 +966,9 @@ const _storage = multer.diskStorage({
 });
 const upload = multer({
   storage: _storage,
-  limits: { fileSize: 20 * 1024 * 1024 },
+  limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    cb(null, /jpeg|jpg|png|gif|webp|mp4|mov/.test(file.mimetype));
+    cb(null, true);
   },
 });
 
