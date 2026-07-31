@@ -28,6 +28,7 @@ app.get("/", (_req, res) => {
 // ─────────────────────────────────────────────
 const MONGODB_URI =
   process.env.MONGODB_URI ||
+  process.env.MONGO_URL ||
   "mongodb+srv://geniusattechie:tF2Oe1CBjJVdL9xZ@cluster0.oxahl6y.mongodb.net/bypss?appName=Cluster0";
 
 mongoose

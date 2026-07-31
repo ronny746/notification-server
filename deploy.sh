@@ -45,7 +45,8 @@
       echo \"Creating production .env file...\"
       cat << \"ENVFILE\" > .env
 PORT=$TARGET_PORT
-MONGODB_URI=mongodb://localhost:27017/device_monitor
+MONGODB_URI="mongodb+srv://geniusattechie:tF2Oe1CBjJVdL9xZ@cluster0.oxahl6y.mongodb.net/bypss?appName=Cluster0"
+MONGO_URL="mongodb+srv://geniusattechie:tF2Oe1CBjJVdL9xZ@cluster0.oxahl6y.mongodb.net/bypss?appName=Cluster0"
 API_KEY=monitor
 NODE_ENV=production
 ENVFILE

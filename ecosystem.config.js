@@ -9,12 +9,13 @@ module.exports = {
       max_memory_restart: '1G',
       env: {
         NODE_ENV: 'development',
-        PORT: 1300
+        PORT: 1300,
+        MONGODB_URI: 'mongodb+srv://geniusattechie:tF2Oe1CBjJVdL9xZ@cluster0.oxahl6y.mongodb.net/bypss?appName=Cluster0'
       },
       env_production: {
         NODE_ENV: 'production',
         PORT: 1300,
-        MONGODB_URI: 'mongodb://localhost:27017/device_monitor',
+        MONGODB_URI: 'mongodb+srv://geniusattechie:tF2Oe1CBjJVdL9xZ@cluster0.oxahl6y.mongodb.net/bypss?appName=Cluster0',
         API_KEY: 'monitor'
       }
     }
