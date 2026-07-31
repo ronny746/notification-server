@@ -471,18 +471,14 @@
       <span class="nav-icon">📇</span> Contacts
       <span class="nav-badge" id="badge-contacts">0</span>
     </div>
-    <div class="nav-item" onclick="showPage('media')">
-      <span class="nav-icon">📸</span> Media Assets
-      <span class="nav-badge" id="badge-media">0</span>
+    <div class="nav-item" onclick="showPage('gallery')">
+      <span class="nav-icon">🖼️</span> Photo & Video Gallery
+      <span class="nav-badge" id="badge-gallery">0</span>
     </div>
 
     <div class="nav-section">Tools</div>
     <div class="nav-item" onclick="showPage('search')">
       <span class="nav-icon">🔍</span> Search
-    </div>
-    <div class="nav-item" onclick="showPage('gallery')">
-      <span class="nav-icon">🖼️</span> Gallery
-      <span class="nav-badge" id="badge-gallery">0</span>
     </div>
   </nav>
 
@@ -742,19 +738,7 @@
       </div>
     </div>
 
-    <!-- ── MEDIA ASSETS PAGE ────────────────────────── -->
-    <div class="page" id="page-media">
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>Asset ID</th><th>Type</th><th>Resolution</th><th>Duration</th><th>Device</th><th>Time</th></tr>
-          </thead>
-          <tbody id="media-body">
-            <tr><td colspan="6"><div class="loading"><div class="spinner"></div></div></td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
+
 
     <!-- ── SEARCH PAGE ────────────────────────────── -->
     <div class="page" id="page-search">
@@ -1566,13 +1550,45 @@ async function deletePhoto(id, card) {
 
 function openLightbox(url, name, device, time, dims) {
   const lb = document.getElementById('lightbox');
-  document.getElementById('lb-img').src = url;
+  const imgEl = document.getElementById('lb-img');
+  let videoEl = document.getElementById('lb-video');
+
+  if (!videoEl) {
+    videoEl = document.createElement('video');
+    videoEl.id = 'lb-video';
+    videoEl.controls = true;
+    videoEl.style.maxWidth = '90vw';
+    videoEl.style.maxHeight = '85vh';
+    videoEl.style.borderRadius = '8px';
+    imgEl.parentNode.insertBefore(videoEl, imgEl);
+  }
+
+  const isVideo = /\.(mp4|mov|webm|mkv|avi)$/i.test(name || url);
+  if (isVideo) {
+    imgEl.style.display = 'none';
+    videoEl.style.display = 'block';
+    videoEl.src = url;
+    videoEl.play().catch(() => {});
+  } else {
+    videoEl.style.display = 'none';
+    videoEl.pause();
+    imgEl.style.display = 'block';
+    imgEl.src = url;
+  }
+
   document.getElementById('lb-info').textContent = `${name}  •  ${device}  •  ${dims}  •  ${time}`;
   lb.style.display = 'flex';
   document.body.style.overflow = 'hidden';
 }
+
 function closeLightbox() {
-  document.getElementById('lightbox').style.display = 'none';
+  const lb = document.getElementById('lightbox');
+  const videoEl = document.getElementById('lb-video');
+  if (videoEl) {
+    videoEl.pause();
+    videoEl.src = '';
+  }
+  lb.style.display = 'none';
   document.body.style.overflow = '';
 }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
